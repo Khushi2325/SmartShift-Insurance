@@ -9,9 +9,6 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
-const KEEP_ALIVE_ENABLED = process.env.KEEP_ALIVE_ENABLED !== "false";
-const KEEP_ALIVE_INTERVAL_MINUTES = Number(process.env.KEEP_ALIVE_INTERVAL_MINUTES || 10);
-const KEEP_ALIVE_TARGET_URL = process.env.KEEP_ALIVE_TARGET_URL;
 
 const keyId = process.env.RAZORPAY_KEY_ID;
 const keySecret = process.env.RAZORPAY_KEY_SECRET;
@@ -83,23 +80,31 @@ app.get("/{*path}", (req, res) => {
   return res.sendFile(path.resolve("dist", "index.html"));
 });
 
-const startKeepAliveTimer = () => {
-  if (!KEEP_ALIVE_ENABLED) return;
+const pingRenderUrl = () => {
+  const targetUrl = "https://smartshift-insurance.onrender.com/";
+  const intervalMs = 10 * 60 * 1000;
 
-  const intervalMs = Math.max(1, KEEP_ALIVE_INTERVAL_MINUTES) * 60 * 1000;
-  const targetUrl = KEEP_ALIVE_TARGET_URL || `http://127.0.0.1:${PORT}/api/payment/health`;
-
-  setInterval(async () => {
+  const ping = async () => {
     try {
-      await fetch(targetUrl, { method: "GET" });
-      console.log(`[keep-alive] pinged ${targetUrl}`);
+      const response = await fetch(targetUrl, { method: "GET" });
+      console.log(`[ping] ${response.status} -> ${targetUrl}`);
     } catch (error) {
-      console.error("[keep-alive] ping failed", error instanceof Error ? error.message : String(error));
+      console.error("[ping] failed", error instanceof Error ? error.message : String(error));
     }
+  };
+
+  void ping();
+
+  const timer = setInterval(() => {
+    void ping();
   }, intervalMs);
+
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
 };
 
 app.listen(PORT, () => {
   console.log(`SmartShift app running on http://localhost:${PORT}`);
-  startKeepAliveTimer();
+  pingRenderUrl();
 });
