@@ -113,8 +113,16 @@ export const premiumForRisk = (riskLevel: RiskLevel): number => {
 };
 
 export const payoutForMetrics = ({ rainfallMm, aqi }: RiskMetrics): { eventType: DemoEventType; amount: number } | null => {
-  if (rainfallMm > 50) return { eventType: "Rain", amount: 300 };
-  if (aqi > 300) return { eventType: "AQI", amount: 200 };
+  const riskLevel = calculateRiskLevel({ rainfallMm, aqi });
+
+  if (riskLevel === "HIGH") {
+    return { eventType: "Rain", amount: 500 };
+  }
+
+  if (riskLevel === "MEDIUM") {
+    return { eventType: "AQI", amount: 300 };
+  }
+
   return null;
 };
 
