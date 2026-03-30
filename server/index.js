@@ -2,12 +2,13 @@ import crypto from "crypto";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import path from "path";
 import Razorpay from "razorpay";
 
 dotenv.config();
 
 const app = express();
-const port = Number(process.env.PAYMENT_API_PORT || 5174);
+const PORT = Number(process.env.PORT || 8080);
 
 const keyId = process.env.RAZORPAY_KEY_ID;
 const keySecret = process.env.RAZORPAY_KEY_SECRET;
@@ -69,6 +70,16 @@ app.get("/api/payment/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.listen(port, () => {
-  console.log(`SmartShift payment API running on http://localhost:${port}`);
+app.use(express.static(path.resolve("dist")));
+
+app.get("/{*path}", (req, res) => {
+  if (req.path.startsWith("/api/")) {
+    return res.status(404).json({ error: "Not found" });
+  }
+
+  return res.sendFile(path.resolve("dist", "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`SmartShift app running on http://localhost:${PORT}`);
 });
