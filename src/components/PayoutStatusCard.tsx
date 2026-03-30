@@ -22,7 +22,7 @@ const PayoutStatusCard = ({ event }: PayoutStatusCardProps) => {
     return (
       <div className="glass-card-elevated p-5 border-2 border-dashed border-border/80">
         <h3 className="font-display font-semibold text-foreground mb-2">Last Payout Event</h3>
-        <p className="text-sm text-muted-foreground">Run a simulation to auto-fill this with event type, payout, credited status, and timestamp.</p>
+        <p className="text-sm text-muted-foreground">No event yet</p>
       </div>
     );
   }

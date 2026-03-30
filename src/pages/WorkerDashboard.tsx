@@ -42,9 +42,9 @@ const fallbackTrend: TrendPoint[] = [
 ];
 
 const planCatalog = [
-  { id: "day-shield", name: "Day Shield", window: "8:00 AM - 8:00 PM", premium: "₹45", payout: "₹500", triggers: "Rain, AQI, Heat" },
-  { id: "rush-hour-cover", name: "Rush Hour Cover", window: "6:00 AM - 11:00 AM", premium: "₹25", payout: "₹300", triggers: "Rain, AQI" },
-  { id: "night-safety", name: "Night Safety", window: "6:00 PM - 11:00 PM", premium: "₹30", payout: "₹350", triggers: "Rain, Heat" },
+  { id: "day-shield", name: "Day Shield", window: "8:00 AM - 8:00 PM", premium: "₹45", payout: "₹500", triggers: "Rain > 50mm" },
+  { id: "rush-hour-cover", name: "Rush Hour Cover", window: "6:00 AM - 11:00 AM", premium: "₹25", payout: "₹300", triggers: "AQI > 300" },
+  { id: "night-safety", name: "Night Safety", window: "6:00 PM - 11:00 PM", premium: "₹30", payout: "₹350", triggers: "Rain OR Heat > 40°C" },
 ];
 
 const cityConditions: Record<string, { rain: string; rainMm: number; aqi: number; temp: string; risk: number }> = {
@@ -162,13 +162,11 @@ const WorkerDashboard = () => {
   const [isWeatherLoading, setIsWeatherLoading] = useState(false);
   const [trendData, setTrendData] = useState<TrendPoint[]>(fallbackTrend);
   const [paymentPlanId, setPaymentPlanId] = useState<string | null>(null);
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentRef, setPaymentRef] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"upi" | "card">("upi");
-  const [paymentIdentity, setPaymentIdentity] = useState("");
-  const [paymentProcessing, setPaymentProcessing] = useState(false);
-  const [paymentError, setPaymentError] = useState("");
+  const [upiId, setUpiId] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
   const [fraudScenario, setFraudScenario] = useState<FraudScenario>("none");
+  const [fraudAlert, setFraudAlert] = useState("");
   const [simulatingEvent, setSimulatingEvent] = useState<DemoEventType | null>(null);
   const [demoState, setDemoState] = useState(() => (user ? getWorkerDemoState(user) : getWorkerDemoState({ email: "" })));
   const [payoutCelebration, setPayoutCelebration] = useState<{ amount: number; walletBalance: number } | null>(null);
@@ -242,43 +240,17 @@ const WorkerDashboard = () => {
 
   const startPlanPayment = (planId: string) => {
     setPaymentPlanId(planId);
-    setPaymentAmount("");
-    setPaymentRef("");
-    setPaymentMethod("upi");
-    setPaymentIdentity("");
-    setPaymentProcessing(false);
-    setPaymentError("");
+    setUpiId("");
+    setPaymentStatus("");
+    setIsProcessing(false);
   };
 
-  const handleActivatePlan = async (planId: string) => {
+  const activatePlan = async (planId: string) => {
     if (!user) return;
     const plan = planCatalog.find((item) => item.id === planId);
     if (!plan) return;
 
     const expected = parseMoney(plan.premium);
-    const entered = Number(paymentAmount);
-
-    if (!Number.isFinite(entered) || entered <= 0) {
-      setPaymentError("Please enter the payment amount.");
-      return;
-    }
-    if (Math.round(entered) !== Math.round(expected)) {
-      setPaymentError(`Entered amount must be exactly ${plan.premium} for this plan.`);
-      return;
-    }
-
-    if (!paymentIdentity.trim()) {
-      setPaymentError(paymentMethod === "upi" ? "Please enter UPI ID." : "Please enter card reference.");
-      return;
-    }
-
-    if (paymentMethod === "upi" && !/^[a-zA-Z0-9._-]{2,}@[a-zA-Z]{2,}$/.test(paymentIdentity.trim())) {
-      setPaymentError("Please enter a valid UPI ID (example: name@bank). ");
-      return;
-    }
-
-    setPaymentProcessing(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
 
     const next = {
       ...user,
@@ -288,15 +260,33 @@ const WorkerDashboard = () => {
     setSession(next);
     setUser(next);
     setPaymentPlanId(null);
-    setPaymentAmount("");
-    setPaymentRef("");
-    setPaymentIdentity("");
-    setPaymentProcessing(false);
-    setPaymentError("");
+    setUpiId("");
+    setIsProcessing(false);
 
     const updatedDemo = recordPremiumPayment(next, expected, plan.name);
     setDemoState(updatedDemo);
     toast.success("Insurance activated. You can now simulate disruption events.");
+  };
+
+  const handlePurchase = (planId: string) => {
+    if (!upiId.trim()) {
+      alert("⚠️ Please enter UPI ID");
+      return;
+    }
+
+    if (!upiId.includes("@")) {
+      alert("❌ Invalid UPI ID");
+      return;
+    }
+
+    setIsProcessing(true);
+    setPaymentStatus("Processing payment...");
+
+    window.setTimeout(() => {
+      setIsProcessing(false);
+      setPaymentStatus("✅ Payment Successful");
+      void activatePlan(planId);
+    }, 2000);
   };
 
   const handleSimulateEvent = async (eventType: DemoEventType) => {
@@ -503,6 +493,7 @@ const WorkerDashboard = () => {
             <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-1">
               <MapPin className="w-3.5 h-3.5" /> {displayCity} · {formattedDate}
             </p>
+            <p className="text-xs text-muted-foreground mt-1">Persona: Raju, Zomato delivery partner in Mumbai earning ₹600/day</p>
           </div>
           <div className="flex items-center gap-3">
             {policyActive ? (
@@ -552,14 +543,20 @@ const WorkerDashboard = () => {
             </div>
             <div className="mb-3 rounded-xl border border-accent/30 bg-accent/10 p-4">
               <p className="text-xs font-medium text-muted-foreground">Core Impact</p>
-              <p className="text-2xl md:text-3xl font-display font-bold text-foreground mt-1">💰 Wallet Balance: ₹{demoState.walletBalance}</p>
+              <h2 className="text-2xl md:text-3xl font-bold text-green-600 mt-1">💰 Wallet: ₹{demoState.walletBalance}</h2>
+              <p className="text-xs text-muted-foreground mt-1">Avg Worker Earnings: ₹600/day · Policy covers ~70% income loss</p>
             </div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <span className="text-xs text-muted-foreground">Fraud Simulation:</span>
-              <Button size="sm" variant={fraudScenario === "none" ? "default" : "outline"} onClick={() => setFraudScenario("none")}>Normal</Button>
-              <Button size="sm" variant={fraudScenario === "sudden-jump" ? "default" : "outline"} onClick={() => setFraudScenario("sudden-jump")}>Sudden Location Jump</Button>
-              <Button size="sm" variant={fraudScenario === "static-location" ? "default" : "outline"} onClick={() => setFraudScenario("static-location")}>Static During Event</Button>
+              <Button size="sm" variant={fraudScenario === "none" ? "default" : "outline"} onClick={() => { setFraudScenario("none"); setFraudAlert(""); }}>Normal</Button>
+              <Button size="sm" variant={fraudScenario === "sudden-jump" ? "default" : "outline"} onClick={() => { setFraudScenario("sudden-jump"); setFraudAlert("Location jump detected (GPS spoofing)"); }}>Sudden Location Jump</Button>
+              <Button size="sm" variant={fraudScenario === "static-location" ? "default" : "outline"} onClick={() => { setFraudScenario("static-location"); setFraudAlert("Static location detected during high-risk event"); }}>Static During Event</Button>
             </div>
+            {fraudAlert && (
+              <div className="bg-red-100 text-red-700 p-2 rounded mt-2 text-sm">
+                ⚠️ Suspicious activity detected (GPS spoofing) - {fraudAlert}
+              </div>
+            )}
             {fraudScenario !== "none" && (
               <div className="mb-3 rounded-lg border border-risk-medium/40 bg-risk-medium-bg/50 p-3">
                 <p className="text-sm font-semibold text-risk-medium">⚠️ Suspicious Activity Detected</p>
@@ -611,7 +608,7 @@ const WorkerDashboard = () => {
                   <div className="space-y-1.5 text-sm mb-3">
                     <div className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="text-foreground">{plan.window}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Premium</span><span className="text-foreground">{plan.premium}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Max Payout</span><span className="text-foreground">{plan.payout}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Payout</span><span className="text-foreground">{plan.payout}</span></div>
                     <div className="text-xs text-muted-foreground mt-1">Triggers: {plan.triggers}</div>
                   </div>
 
@@ -621,41 +618,24 @@ const WorkerDashboard = () => {
                     </Button>
                   ) : inPayment ? (
                     <div className="space-y-2">
-                      <div className="rounded-md border border-border/60 bg-muted/30 p-2">
-                        <p className="text-xs font-medium text-foreground mb-1">Secure Payment Gateway</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Button type="button" variant={paymentMethod === "upi" ? "default" : "outline"} className="h-8" onClick={() => setPaymentMethod("upi")}>UPI</Button>
-                          <Button type="button" variant={paymentMethod === "card" ? "default" : "outline"} className="h-8" onClick={() => setPaymentMethod("card")}>Card</Button>
-                        </div>
-                      </div>
                       <Input
-                        value={paymentAmount}
+                        type="text"
+                        value={upiId}
                         onChange={(e) => {
-                          setPaymentAmount(e.target.value);
-                          setPaymentError("");
+                          setUpiId(e.target.value);
+                          setPaymentStatus("");
                         }}
-                        placeholder={`Enter exact premium ${plan.premium}`}
+                        placeholder="Enter UPI ID (example@upi)"
                       />
-                      <Input
-                        value={paymentIdentity}
-                        onChange={(e) => {
-                          setPaymentIdentity(e.target.value);
-                          setPaymentError("");
-                        }}
-                        placeholder={paymentMethod === "upi" ? "UPI ID (name@bank)" : "Card ref (last 4 digits)"}
-                      />
-                      <Input
-                        value={paymentRef}
-                        onChange={(e) => setPaymentRef(e.target.value)}
-                        placeholder="UPI / transaction ref (optional)"
-                      />
-                      {paymentError && <p className="text-xs text-risk-high">{paymentError}</p>}
                       <div className="grid grid-cols-2 gap-2">
-                        <Button className="w-full" disabled={paymentProcessing} onClick={() => handleActivatePlan(plan.id)}>
-                          {paymentProcessing ? "Processing..." : "Pay & Activate"}
+                        <Button className="w-full" disabled={isProcessing} onClick={() => handlePurchase(plan.id)}>
+                          {isProcessing ? "Processing..." : "Pay & Activate Plan"}
                         </Button>
-                        <Button className="w-full" variant="outline" disabled={paymentProcessing} onClick={() => setPaymentPlanId(null)}>Cancel</Button>
+                        <Button className="w-full" variant="outline" disabled={isProcessing} onClick={() => setPaymentPlanId(null)}>Cancel</Button>
                       </div>
+                      {paymentStatus && (
+                        <p className={`mt-2 text-xs ${paymentStatus.includes("Successful") ? "text-green-600" : "text-muted-foreground"}`}>{paymentStatus}</p>
+                      )}
                     </div>
                   ) : (
                     <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}>
@@ -704,6 +684,7 @@ const WorkerDashboard = () => {
             <p className="text-xs text-muted-foreground bg-muted/50 p-2.5 rounded-lg">
               {isWeatherLoading ? "Refreshing live weather and AI score..." : userCity ? `Logic: Rain > 50mm = HIGH (₹60/week), AQI > 300 = MEDIUM (₹40/week), else LOW (₹20/week).` : "Add your city in profile to enable location-based risk insights."}
             </p>
+            <p className="text-xs text-muted-foreground mt-2">Logic: Rain &gt; 50mm = HIGH → payout triggered · AQI &gt; 300 = MEDIUM → partial payout</p>
             <p className="text-xs mt-2 text-foreground/80">
               {riskLevel === "HIGH" ? "High risk → higher chance of payout." : "Low risk → safer working conditions."}
             </p>
