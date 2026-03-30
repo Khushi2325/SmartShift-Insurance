@@ -57,8 +57,8 @@ const LoginPage = () => {
       <div className="flex-1 flex items-center justify-center p-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
           <Link to="/" className="flex items-center gap-2 mb-8">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Shield className="w-4 h-4 text-primary-foreground" />
+            <div className="w-8 h-8 rounded-lg bg-white border border-border/60 flex items-center justify-center overflow-hidden">
+              <img src="/logo.png" alt="SmartShift logo" className="h-8 w-8 object-contain" />
             </div>
             <span className="font-display font-bold text-lg text-foreground">SmartShift</span>
           </Link>

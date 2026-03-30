@@ -32,12 +32,7 @@ const LandingPage = () => {
       {/* Nav */}
       <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container mx-auto flex items-center justify-between h-16 px-4">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Shield className="w-4 h-4 text-primary-foreground" />
-            </div>
-            <span className="font-display font-bold text-lg text-foreground">SmartShift</span>
-          </Link>
+          <div className="w-24" />
           <div className="flex items-center gap-3">
             {session ? (
               <>
@@ -64,24 +59,39 @@ const LandingPage = () => {
       </nav>
 
       {/* Hero */}
-      <section className="pt-32 pb-20 px-4 relative overflow-hidden">
+      <section className="pt-20 pb-16 px-4 relative overflow-hidden">
+        <div className="absolute -top-24 -left-20 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
+        <div className="absolute -bottom-28 -right-20 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl" />
         <div className="absolute inset-0 opacity-[0.03]" style={{
           backgroundImage: 'radial-gradient(circle at 1px 1px, hsl(var(--foreground)) 1px, transparent 0)',
           backgroundSize: '32px 32px'
         }} />
         <div className="container mx-auto text-center relative">
+          <motion.div initial="hidden" animate="visible" variants={fadeUp} custom={-1} className="mb-2 flex items-center justify-center">
+            <div className="relative inline-flex items-center justify-center">
+              <div className="absolute inset-0 -z-10 blur-3xl opacity-45 bg-[radial-gradient(circle,_rgba(37,99,235,0.6)_0%,_rgba(20,184,166,0.35)_40%,_rgba(139,92,246,0.2)_70%,_rgba(255,255,255,0)_90%)]" />
+              <img 
+                src="/logo.png" 
+                alt="SmartShift Insurance" 
+                className="h-auto w-80 md:w-96 object-contain drop-shadow-2xl filter brightness-105"
+                style={{
+                  filter: 'drop-shadow(0 20px 40px rgba(37, 99, 235, 0.25)) drop-shadow(0 10px 20px rgba(20, 184, 166, 0.15))',
+                }}
+              />
+            </div>
+          </motion.div>
           <motion.div initial="hidden" animate="visible" variants={fadeUp} custom={0}>
-            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium mb-4">
               <Zap className="w-3.5 h-3.5" /> AI-Powered Parametric Insurance
             </span>
           </motion.div>
           <motion.h1 variants={fadeUp} custom={1} initial="hidden" animate="visible"
-            className="font-display text-5xl md:text-7xl font-bold tracking-tight mb-6 max-w-4xl mx-auto leading-[1.1]">
-            Protect Your Income,{" "}
+            className="font-display text-2xl md:text-4xl font-bold tracking-tight mb-5 max-w-4xl mx-auto leading-[1.1]">
+            Protect Your Income,<br />
             <span className="gradient-text">Automatically</span>
           </motion.h1>
           <motion.p variants={fadeUp} custom={2} initial="hidden" animate="visible"
-            className="text-muted-foreground text-lg md:text-xl max-w-2xl mx-auto mb-10">
+            className="text-muted-foreground text-lg md:text-xl max-w-2xl mx-auto mb-8">
             SmartShift monitors weather, air quality, and environmental conditions — and pays you instantly when disruptions prevent you from working. No claims. No waiting.
           </motion.p>
           <motion.div variants={fadeUp} custom={3} initial="hidden" animate="visible" className="flex items-center justify-center gap-4">
@@ -222,9 +232,8 @@ const LandingPage = () => {
       {/* Footer */}
       <footer className="border-t border-border py-8 px-4">
         <div className="container mx-auto flex items-center justify-between text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-primary" />
-            <span className="font-display font-semibold text-foreground">SmartShift Insurance</span>
+          <div className="flex items-center gap-2.5">
+            <img src="/logo.png" alt="SmartShift logo" className="h-9 w-28 object-contain" />
           </div>
           <p>© 2026 SmartShift. AI-Powered Parametric Insurance.</p>
         </div>
