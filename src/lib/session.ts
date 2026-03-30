@@ -1,6 +1,8 @@
 export type UserRole = "worker" | "admin";
 
 export type AiRecommendationMode = "balanced" | "safety-first" | "earnings-first";
+export type AppLanguage = "English" | "Hindi";
+export type ThemeMode = "dark" | "light";
 
 export interface UserPreferences {
   weatherAlerts: boolean;
@@ -8,7 +10,8 @@ export interface UserPreferences {
   shiftReminders: boolean;
   marketingEmails: boolean;
   aiRecommendationMode: AiRecommendationMode;
-  language: string;
+  language: AppLanguage;
+  theme: ThemeMode;
 }
 
 export interface UserSession {
@@ -25,6 +28,7 @@ export interface UserSession {
 }
 
 const SESSION_KEY = "smartshift_user";
+export const SESSION_UPDATED_EVENT = "smartshift-session-updated";
 
 const defaultPreferences: UserPreferences = {
   weatherAlerts: true,
@@ -33,6 +37,7 @@ const defaultPreferences: UserPreferences = {
   marketingEmails: false,
   aiRecommendationMode: "balanced",
   language: "English",
+  theme: "dark",
 };
 
 export const getSession = (): UserSession | null => {
@@ -59,7 +64,8 @@ export const getSession = (): UserSession | null => {
         shiftReminders: parsed.preferences?.shiftReminders ?? defaultPreferences.shiftReminders,
         marketingEmails: parsed.preferences?.marketingEmails ?? defaultPreferences.marketingEmails,
         aiRecommendationMode: parsed.preferences?.aiRecommendationMode ?? defaultPreferences.aiRecommendationMode,
-        language: parsed.preferences?.language ?? defaultPreferences.language,
+        language: parsed.preferences?.language === "Hindi" ? "Hindi" : "English",
+        theme: parsed.preferences?.theme === "light" ? "light" : "dark",
       },
     };
   } catch {
@@ -69,8 +75,10 @@ export const getSession = (): UserSession | null => {
 
 export const setSession = (session: UserSession) => {
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  window.dispatchEvent(new Event(SESSION_UPDATED_EVENT));
 };
 
 export const clearSession = () => {
   localStorage.removeItem(SESSION_KEY);
+  window.dispatchEvent(new Event(SESSION_UPDATED_EVENT));
 };

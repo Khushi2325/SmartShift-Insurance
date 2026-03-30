@@ -1,5 +1,6 @@
 import { CheckCircle2, Clock3 } from "lucide-react";
 import { LastPayoutEvent } from "@/lib/insuranceDemo";
+import { tx, useAppLanguage } from "@/lib/preferences";
 
 interface PayoutStatusCardProps {
   event: LastPayoutEvent | null;
@@ -12,42 +13,44 @@ const formatTimestamp = (value: string) => {
   });
 };
 
-const eventLabel = (eventType: LastPayoutEvent["eventType"]) => {
-  if (eventType === "Rain") return "Heavy Rain 🌧️";
-  return "Severe Pollution 🌫️";
+const eventLabel = (eventType: LastPayoutEvent["eventType"], language: "English" | "Hindi") => {
+  if (eventType === "Rain") return tx(language, "Heavy Rain 🌧️", "तेज बारिश 🌧️");
+  return tx(language, "Severe Pollution 🌫️", "गंभीर प्रदूषण 🌫️");
 };
 
 const PayoutStatusCard = ({ event }: PayoutStatusCardProps) => {
+  const language = useAppLanguage();
+
   if (!event) {
     return (
       <div className="glass-card-elevated p-5 border-2 border-dashed border-border/80">
-        <h3 className="font-display font-semibold text-foreground mb-2">Last Payout Event</h3>
-        <p className="text-sm text-muted-foreground">No event yet</p>
+        <h3 className="font-display font-semibold text-foreground mb-2">{tx(language, "Last Payout Event", "आखिरी पेआउट इवेंट")}</h3>
+        <p className="text-sm text-muted-foreground">{tx(language, "No event yet", "अभी कोई इवेंट नहीं")}</p>
       </div>
     );
   }
 
   return (
     <div className="glass-card-elevated p-5 border-2 border-accent/20 bg-accent/5">
-      <h3 className="font-display font-semibold text-foreground mb-3">Last Payout Event</h3>
+      <h3 className="font-display font-semibold text-foreground mb-3">{tx(language, "Last Payout Event", "आखिरी पेआउट इवेंट")}</h3>
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div>
-          <p className="text-xs text-muted-foreground">Last Event Type</p>
-          <p className="font-semibold text-foreground">{eventLabel(event.eventType)}</p>
+          <p className="text-xs text-muted-foreground">{tx(language, "Last Event Type", "आखिरी इवेंट प्रकार")}</p>
+          <p className="font-semibold text-foreground">{eventLabel(event.eventType, language)}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Payout Amount</p>
+          <p className="text-xs text-muted-foreground">{tx(language, "Payout Amount", "पेआउट राशि")}</p>
           <p className="font-semibold text-foreground">₹{event.amount}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Status</p>
+          <p className="text-xs text-muted-foreground">{tx(language, "Status", "स्थिति")}</p>
           <p className={`inline-flex items-center gap-1 font-semibold ${event.status === "Credited" ? "text-accent" : "text-risk-medium"}`}>
             {event.status === "Credited" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clock3 className="h-3.5 w-3.5" />}
-            {event.status === "Credited" ? "Credited ✅" : "Under Review"}
+            {event.status === "Credited" ? tx(language, "Credited ✅", "जमा ✅") : tx(language, "Under Review", "समीक्षा में")}
           </p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Timestamp</p>
+          <p className="text-xs text-muted-foreground">{tx(language, "Timestamp", "समय")}</p>
           <p className="font-medium text-foreground">{formatTimestamp(event.timestamp)}</p>
         </div>
       </div>

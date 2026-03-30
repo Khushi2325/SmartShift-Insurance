@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
 import { setSession } from "@/lib/session";
 import { registerUser, validateEmailAuthenticity } from "@/lib/auth";
+import { tx, useAppLanguage } from "@/lib/preferences";
 
 const RegisterPage = () => {
+  const language = useAppLanguage();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,17 +23,17 @@ const RegisterPage = () => {
 
     const emailCheck = validateEmailAuthenticity(email);
     if (!emailCheck.valid) {
-      setError(emailCheck.message || "Invalid email.");
+      setError(emailCheck.message || tx(language, "Invalid email.", "अमान्य ईमेल।"));
       return;
     }
 
     if (password.trim().length < 6) {
-      setError("Password must be at least 6 characters.");
+      setError(tx(language, "Password must be at least 6 characters.", "पासवर्ड कम से कम 6 अक्षरों का होना चाहिए।"));
       return;
     }
 
     if (!city.trim()) {
-      setError("Please enter your city.");
+      setError(tx(language, "Please enter your city.", "कृपया अपना शहर दर्ज करें।"));
       return;
     }
 
@@ -47,7 +49,7 @@ const RegisterPage = () => {
     });
 
     if (!registration.ok) {
-      setError(registration.message || "Unable to register right now.");
+      setError(registration.message || tx(language, "Unable to register right now.", "अभी रजिस्टर नहीं हो पाया।"));
       return;
     }
 
@@ -68,13 +70,14 @@ const RegisterPage = () => {
         marketingEmails: false,
         aiRecommendationMode: "balanced",
         language: "English",
+        theme: "dark",
       },
     });
     navigate("/dashboard");
   };
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-screen bg-transparent flex">
       <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden items-center justify-center"
         style={{ background: 'var(--gradient-hero)' }}>
         <div className="absolute inset-0 opacity-10" style={{
@@ -83,46 +86,44 @@ const RegisterPage = () => {
         }} />
         <div className="relative text-center px-12">
           <Shield className="w-16 h-16 text-primary-foreground mx-auto mb-6 opacity-90" />
-          <h2 className="font-display text-3xl font-bold text-primary-foreground mb-4">Join SmartShift</h2>
-          <p className="text-primary-foreground/70 max-w-sm mx-auto">Get instant income protection powered by AI. Sign up in under a minute.</p>
+          <h2 className="font-display text-3xl font-bold text-primary-foreground mb-4">{tx(language, "Join SmartShift", "SmartShift से जुड़ें")}</h2>
+          <p className="text-primary-foreground/70 max-w-sm mx-auto">{tx(language, "Get instant income protection powered by AI. Sign up in under a minute.", "AI से संचालित तुरंत आय सुरक्षा पाएँ। एक मिनट से भी कम समय में साइन अप करें।")}</p>
         </div>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
           <Link to="/" className="flex items-center gap-2 mb-8">
-            <div className="w-8 h-8 rounded-lg bg-white border border-border/60 flex items-center justify-center overflow-hidden">
-              <img src="/logo.png" alt="SmartShift logo" className="h-8 w-8 object-contain" />
-            </div>
+            <img src="/logo%202.png" alt="SmartShift logo" className="h-11 w-11 object-contain drop-shadow-sm" />
             <span className="font-display font-bold text-lg text-foreground">SmartShift</span>
           </Link>
 
-          <h1 className="font-display text-2xl font-bold mb-1 text-foreground">Create Account</h1>
-          <p className="text-muted-foreground text-sm mb-8">Start protecting your income in minutes</p>
+          <h1 className="font-display text-2xl font-bold mb-1 text-foreground">{tx(language, "Create Account", "खाता बनाएं")}</h1>
+          <p className="text-muted-foreground text-sm mb-8">{tx(language, "Start protecting your income in minutes", "कुछ ही मिनटों में अपनी आय की सुरक्षा शुरू करें")}</p>
 
           <form onSubmit={handleRegister} className="space-y-4">
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Full name" value={name} onChange={e => setName(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "Full name", "पूरा नाम")} value={name} onChange={e => setName(e.target.value)} className="pl-10" required />
             </div>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Email address" type="email" value={email} onChange={e => setEmail(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "Email address", "ईमेल पता")} type="email" value={email} onChange={e => setEmail(e.target.value)} className="pl-10" required />
             </div>
             <div className="relative">
               <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="City (e.g. Mumbai)" value={city} onChange={e => setCity(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "City (e.g. Mumbai)", "शहर (जैसे मुंबई)")} value={city} onChange={e => setCity(e.target.value)} className="pl-10" required />
             </div>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "Password", "पासवर्ड")} type="password" value={password} onChange={e => setPassword(e.target.value)} className="pl-10" required />
             </div>
             {error && <p className="text-sm text-risk-high">{error}</p>}
-            <Button type="submit" className="w-full gap-2">Create Account <ArrowRight className="w-4 h-4" /></Button>
+            <Button type="submit" className="w-full gap-2">{tx(language, "Create Account", "खाता बनाएं")} <ArrowRight className="w-4 h-4" /></Button>
           </form>
 
           <p className="text-sm text-muted-foreground text-center mt-6">
-            Already have an account? <Link to="/login" className="text-primary font-medium hover:underline">Sign in</Link>
+            {tx(language, "Already have an account?", "पहले से खाता है?")} <Link to="/login" className="text-primary font-medium hover:underline">{tx(language, "Sign in", "साइन इन")}</Link>
           </p>
         </motion.div>
       </div>

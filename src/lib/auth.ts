@@ -98,6 +98,7 @@ export const authenticateUser = (
         marketingEmails: false,
         aiRecommendationMode: "balanced",
         language: "English",
+        theme: "dark",
       },
     },
   };

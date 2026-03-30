@@ -7,6 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { clearSession, getSession, UserSession } from "@/lib/session";
 import { getFlaggedUsers } from "@/lib/insuranceDemo";
+import { tx, useAppLanguage } from "@/lib/preferences";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
@@ -62,6 +63,7 @@ const ruleConfig = [
 ];
 
 const AdminDashboard = () => {
+  const language = useAppLanguage();
   const [activeTab, setActiveTab] = useState<"overview" | "claims" | "fraud" | "rules">("overview");
   const navigate = useNavigate();
   const [user] = useState<UserSession | null>(() => getSession());
@@ -95,22 +97,28 @@ const AdminDashboard = () => {
     navigate("/login");
   };
 
+  const statLabel = (label: string) => {
+    if (label === "Active Policies") return tx(language, label, "सक्रिय पॉलिसियां");
+    if (label === "Claims Today") return tx(language, label, "आज के क्लेम");
+    if (label === "Fraud Flagged") return tx(language, label, "फ्रॉड फ्लैग्ड");
+    if (label === "Payouts Today") return tx(language, label, "आज के पेआउट");
+    return label;
+  };
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-transparent">
       <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container mx-auto flex items-center justify-between h-14 px-4">
           <div className="flex items-center gap-6">
             <Link to="/" className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-white border border-border/60 flex items-center justify-center overflow-hidden">
-                <img src="/logo.png" alt="SmartShift logo" className="h-8 w-8 object-contain" />
-              </div>
+              <img src="/logo%202.png" alt="SmartShift logo" className="h-11 w-11 object-contain drop-shadow-sm" />
               <span className="font-display font-bold text-foreground">SmartShift</span>
             </Link>
-            <span className="text-sm text-muted-foreground hidden md:block">Admin Dashboard</span>
+            <span className="text-sm text-muted-foreground hidden md:block">{tx(language, "Admin Dashboard", "एडमिन डैशबोर्ड")}</span>
           </div>
           <div className="flex items-center gap-3">
             <Link to="/dashboard">
-              <Button variant="ghost" size="sm" className="text-xs">Worker View</Button>
+              <Button variant="ghost" size="sm" className="text-xs">{tx(language, "Worker View", "वर्कर व्यू")}</Button>
             </Link>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -129,22 +137,22 @@ const AdminDashboard = () => {
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="gap-2">
-                  <Receipt className="h-4 w-4" /> Role: Admin
+                  <Receipt className="h-4 w-4" /> {tx(language, "Role", "भूमिका")}: {tx(language, "Admin", "एडमिन")}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link to="/profile" className="flex items-center gap-2 w-full">
-                    <CircleUserRound className="h-4 w-4" /> Profile
+                    <CircleUserRound className="h-4 w-4" /> {tx(language, "Profile", "प्रोफाइल")}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link to="/settings" className="flex items-center gap-2 w-full">
-                    <Settings className="h-4 w-4" /> Settings
+                    <Settings className="h-4 w-4" /> {tx(language, "Settings", "सेटिंग्स")}
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="gap-2 text-risk-high" onClick={handleLogout}>
-                  <LogOut className="h-4 w-4" /> Logout
+                  <LogOut className="h-4 w-4" /> {tx(language, "Logout", "लॉगआउट")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -160,7 +168,13 @@ const AdminDashboard = () => {
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors capitalize ${
                 activeTab === tab ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
               }`}>
-              {tab}
+              {tab === "overview"
+                ? tx(language, "overview", "ओवरव्यू")
+                : tab === "claims"
+                  ? tx(language, "claims", "क्लेम्स")
+                  : tab === "fraud"
+                    ? tx(language, "fraud", "फ्रॉड")
+                    : tx(language, "rules", "रूल्स")}
             </button>
           ))}
         </div>
@@ -177,7 +191,7 @@ const AdminDashboard = () => {
                 </span>
               </div>
               <p className="font-display text-2xl font-bold text-foreground">{s.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
+              <p className="text-xs text-muted-foreground mt-1">{statLabel(s.label)}</p>
             </motion.div>
           ))}
         </div>
@@ -187,10 +201,10 @@ const AdminDashboard = () => {
             {/* City Risk Map */}
             <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="glass-card p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-display font-semibold text-foreground">Live City Risk Monitor</h3>
+                <h3 className="font-display font-semibold text-foreground">{tx(language, "Live City Risk Monitor", "लाइव सिटी जोखिम मॉनिटर")}</h3>
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-accent animate-pulse-glow" />
-                  <span className="text-xs text-muted-foreground">Real-time</span>
+                  <span className="text-xs text-muted-foreground">{tx(language, "Real-time", "रियल-टाइम")}</span>
                 </div>
               </div>
               <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -205,11 +219,11 @@ const AdminDashboard = () => {
                       <span className={`risk-badge-${c.risk.toLowerCase()}`}>{c.risk}</span>
                     </div>
                     <div className="space-y-1.5 text-xs text-muted-foreground">
-                      <div className="flex justify-between"><span>Score</span><span className="font-medium text-foreground">{c.score}</span></div>
-                      <div className="flex justify-between"><span>Rain</span><span>{c.rain}</span></div>
+                      <div className="flex justify-between"><span>{tx(language, "Score", "स्कोर")}</span><span className="font-medium text-foreground">{c.score}</span></div>
+                      <div className="flex justify-between"><span>{tx(language, "Rain", "बारिश")}</span><span>{c.rain}</span></div>
                       <div className="flex justify-between"><span>AQI</span><span>{c.aqi}</span></div>
-                      <div className="flex justify-between"><span>Temp</span><span>{c.temp}</span></div>
-                      <div className="flex justify-between"><span>Policies</span><span className="font-medium text-foreground">{c.policies}</span></div>
+                      <div className="flex justify-between"><span>{tx(language, "Temp", "तापमान")}</span><span>{c.temp}</span></div>
+                      <div className="flex justify-between"><span>{tx(language, "Policies", "पॉलिसियां")}</span><span className="font-medium text-foreground">{c.policies}</span></div>
                     </div>
                   </div>
                 ))}
@@ -219,7 +233,7 @@ const AdminDashboard = () => {
             {/* Charts */}
             <div className="grid lg:grid-cols-2 gap-4">
               <motion.div variants={fadeUp} custom={5} initial="hidden" animate="visible" className="glass-card p-6">
-                <h3 className="font-display font-semibold mb-4 text-foreground">Claims Volume (Today)</h3>
+                <h3 className="font-display font-semibold mb-4 text-foreground">{tx(language, "Claims Volume (Today)", "क्लेम वॉल्यूम (आज)")}</h3>
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={claimVolume}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 88%)" />
@@ -234,7 +248,7 @@ const AdminDashboard = () => {
               </motion.div>
 
               <motion.div variants={fadeUp} custom={6} initial="hidden" animate="visible" className="glass-card p-6">
-                <h3 className="font-display font-semibold mb-4 text-foreground">Fraud Distribution</h3>
+                <h3 className="font-display font-semibold mb-4 text-foreground">{tx(language, "Fraud Distribution", "फ्रॉड डिस्ट्रीब्यूशन")}</h3>
                 <div className="flex items-center gap-6">
                   <ResponsiveContainer width={180} height={180}>
                     <PieChart>
@@ -264,13 +278,13 @@ const AdminDashboard = () => {
         {activeTab === "claims" && (
           <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="glass-card p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display font-semibold text-foreground">Fraud Review Queue</h3>
-              <span className="text-xs px-2 py-1 rounded-full bg-risk-high-bg text-risk-high font-medium">{flaggedUsers.length} user(s) under review</span>
+              <h3 className="font-display font-semibold text-foreground">{tx(language, "Fraud Review Queue", "फ्रॉड समीक्षा कतार")}</h3>
+              <span className="text-xs px-2 py-1 rounded-full bg-risk-high-bg text-risk-high font-medium">{flaggedUsers.length} {tx(language, "user(s) under review", "यूज़र समीक्षा में")}</span>
             </div>
             <div className="space-y-2">
               {flaggedUsers.length === 0 && (
                 <div className="rounded-lg border border-dashed border-border/80 p-4 text-sm text-muted-foreground">
-                  No workers flagged yet. Trigger fraud simulation from worker dashboard to populate this queue.
+                  {tx(language, "No workers flagged yet. Trigger fraud simulation from worker dashboard to populate this queue.", "अभी कोई वर्कर फ्लैग नहीं हुआ। इस सूची को भरने के लिए वर्कर डैशबोर्ड से फ्रॉड सिमुलेशन चलाएं।")}
                 </div>
               )}
               {flaggedUsers.map((worker) => (
@@ -281,13 +295,13 @@ const AdminDashboard = () => {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-foreground">{worker.name}</span>
                         <span className="text-xs text-muted-foreground">· {worker.email}</span>
-                        <span className="text-xs text-muted-foreground">· {worker.city || "Unknown city"}</span>
+                        <span className="text-xs text-muted-foreground">· {worker.city || tx(language, "Unknown city", "अज्ञात शहर")}</span>
                       </div>
                       <span className="text-xs text-risk-medium font-medium">{worker.reason}</span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-risk-medium-bg text-risk-medium">Under Review</span>
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-risk-medium-bg text-risk-medium">{tx(language, "Under Review", "समीक्षा में")}</span>
                     <div className="text-xs text-muted-foreground mt-1">{new Date(worker.timestamp).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
                   </div>
                 </div>
@@ -334,7 +348,7 @@ const AdminDashboard = () => {
         {activeTab === "fraud" && (
           <div className="grid lg:grid-cols-2 gap-4">
             <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="glass-card p-6">
-              <h3 className="font-display font-semibold mb-4 text-foreground">Fraud Signals Breakdown</h3>
+              <h3 className="font-display font-semibold mb-4 text-foreground">{tx(language, "Fraud Signals Breakdown", "फ्रॉड सिग्नल ब्रेकडाउन")}</h3>
               <div className="flex items-center gap-6">
                 <ResponsiveContainer width={180} height={180}>
                   <PieChart>
@@ -355,7 +369,7 @@ const AdminDashboard = () => {
               </div>
             </motion.div>
             <motion.div variants={fadeUp} custom={5} initial="hidden" animate="visible" className="glass-card p-6">
-              <h3 className="font-display font-semibold mb-4 text-foreground">Defense Layers</h3>
+              <h3 className="font-display font-semibold mb-4 text-foreground">{tx(language, "Defense Layers", "डिफेंस लेयर्स")}</h3>
               <div className="space-y-3">
                 {[
                   { title: "Behavioral Analysis", desc: "Movement patterns, speed anomalies, timing analysis", status: "Active" },
@@ -382,8 +396,8 @@ const AdminDashboard = () => {
         {activeTab === "rules" && (
           <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="glass-card p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display font-semibold text-foreground">Rule Configuration</h3>
-              <Button size="sm" variant="outline" className="gap-1"><Settings className="w-3.5 h-3.5" /> Edit Rules</Button>
+              <h3 className="font-display font-semibold text-foreground">{tx(language, "Rule Configuration", "रूल कॉन्फ़िगरेशन")}</h3>
+              <Button size="sm" variant="outline" className="gap-1"><Settings className="w-3.5 h-3.5" /> {tx(language, "Edit Rules", "रूल्स संपादित करें")}</Button>
             </div>
             <div className="space-y-2">
               {ruleConfig.map(r => (
