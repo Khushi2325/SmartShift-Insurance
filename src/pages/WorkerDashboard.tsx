@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Clock, MapPin, TrendingUp, CheckCircle2, Activity, User, LogOut, Receipt, Wallet, Settings, CircleUserRound, AlertTriangle, Sparkles } from "lucide-react";
+import { Clock, MapPin, TrendingUp, CheckCircle2, Activity, User, LogOut, Receipt, Wallet, Settings, CircleUserRound, AlertTriangle, Sparkles, RotateCcw } from "lucide-react";
 import { CloudRain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -247,6 +247,12 @@ const WorkerDashboard = () => {
   const [workerId, setWorkerId] = useState<number | null>(null);
   const [latestClaim, setLatestClaim] = useState<ClaimLifecycle | null>(null);
   const [lastAutoClaimKey, setLastAutoClaimKey] = useState("");
+  const [fraudFlags, setFraudFlags] = useState<{ type: string; severity: string; message: string }[]>([]);
+  const [claimBlocked, setClaimBlocked] = useState(false);
+  const [coverageDetails, setCoverageDetails] = useState<{ planId: string | null; endsAt: string | null }>({
+    planId: null,
+    endsAt: null,
+  });
 
   const userName = toTitleCase(user?.name || tx(language, "Worker", "वर्कर"));
   const userCity = user?.city?.trim() || "";
@@ -302,6 +308,25 @@ const WorkerDashboard = () => {
     if (!user?.purchasedPlans?.length) return null;
     return planCatalog.find((plan) => plan.id === user.purchasedPlans[0]) || null;
   }, [user]);
+
+  const approvedPayoutsTotal = useMemo(
+    () => demoState.transactions
+      .filter((tx) => tx.kind === "PAYOUT" && tx.status === "Credited")
+      .reduce((sum, tx) => sum + tx.amount, 0),
+    [demoState.transactions],
+  );
+
+  const resolvedCoveragePlan = useMemo(
+    () => (coverageDetails.planId ? planCatalog.find((plan) => plan.id === coverageDetails.planId) || null : activePlan),
+    [activePlan, coverageDetails.planId],
+  );
+
+  const coverageDaysRemaining = useMemo(() => {
+    if (!coverageDetails.endsAt) return null;
+    const remainingMs = new Date(coverageDetails.endsAt).getTime() - Date.now();
+    if (!Number.isFinite(remainingMs)) return null;
+    return Math.max(0, Math.ceil(remainingMs / (1000 * 60 * 60 * 24)));
+  }, [coverageDetails.endsAt]);
 
   const shiftRecommendations = useMemo(
     () => buildRecommendations(trendData, user?.preferences?.aiRecommendationMode || "balanced"),
@@ -433,6 +458,28 @@ const WorkerDashboard = () => {
     setLatestClaim(claim);
   };
 
+  const runFraudCheck = async (): Promise<"APPROVE" | "REVIEW" | "BLOCK"> => {
+    try {
+      const res = await fetch("/api/fraud/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          worker_email: user?.email,
+          city: userCity,
+          rain_mm: currentCondition.rainMm,
+          aqi: currentCondition.aqi,
+          triggers: triggerReasons,
+        }),
+      });
+      const data = await res.json();
+      setFraudFlags(data.flags || []);
+      setClaimBlocked(data.isFraudulent);
+      return data.recommendation || "APPROVE";
+    } catch {
+      return "APPROVE";
+    }
+  };
+
   const startPlanPayment = (planId: string) => {
     setPaymentPlanId(planId);
     setUpiId("");
@@ -454,6 +501,10 @@ const WorkerDashboard = () => {
     };
     setSession(next);
     setUser(next);
+    setCoverageDetails({
+      planId,
+      endsAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+    });
     setPaymentPlanId(null);
     setUpiId("");
     setIsProcessing(false);
@@ -626,6 +677,7 @@ const WorkerDashboard = () => {
           && portal.worker?.plan_end_time
           && new Date(portal.worker.plan_end_time).getTime() > Date.now(),
         );
+        let resolvedCoverageEndsAt: string | null = portal.worker?.plan_end_time || null;
 
         if (!profilePlanId || !profilePlanIsActive) {
           try {
@@ -636,6 +688,9 @@ const WorkerDashboard = () => {
               && profile.plan_end_time
               && new Date(profile.plan_end_time).getTime() > Date.now(),
             );
+            if (profilePlanIsActive) {
+              resolvedCoverageEndsAt = profile.plan_end_time;
+            }
           } catch {
             // Non-blocking profile hydration fallback.
           }
@@ -645,6 +700,10 @@ const WorkerDashboard = () => {
         const policyIsCurrentlyActive = profilePlanIsActive || policyIsActive;
         const resolvedWorkerId = Number(portal.worker?.id || 0) || null;
         setWorkerId(resolvedWorkerId);
+        setCoverageDetails({
+          planId: activePlanId,
+          endsAt: resolvedCoverageEndsAt,
+        });
 
         if (portal.latestClaim) {
           setLatestClaim({
@@ -790,14 +849,26 @@ const WorkerDashboard = () => {
     if (claimKey === lastAutoClaimKey) return;
 
     setLastAutoClaimKey(claimKey);
-    const payout = Math.min(300, coverageLimit);
+    void (async () => {
+      const recommendation = await runFraudCheck();
 
-    void createClaimLifecycle({
-      userId: workerId,
-      triggers: triggerReasons,
-      amount: payout,
-    })
-      .then(async (response) => {
+      if (recommendation === "BLOCK") {
+        toast.error("⚠️ Claim blocked — suspicious activity detected");
+        return;
+      }
+
+      if (recommendation === "REVIEW") {
+        toast.warning("⚠️ Claim flagged for review — will be processed manually");
+      }
+
+      const payout = Math.min(300, coverageLimit);
+
+      try {
+        const response = await createClaimLifecycle({
+          userId: workerId,
+          triggers: triggerReasons,
+          amount: payout,
+        });
         setLatestClaim(response.claim);
         await new Promise((resolve) => window.setTimeout(resolve, 1500));
         const approved = await approveClaimLifecycle(response.claim.id);
@@ -815,10 +886,10 @@ const WorkerDashboard = () => {
         });
 
         toast.success("💸 ₹300 credited due to rain disruption");
-      })
-      .catch(() => {
+      } catch {
         toast.error("Unable to create claim right now");
-      });
+      }
+    })();
   }, [activePlan, autoClaimTriggered, coverageLimit, lastAutoClaimKey, policyActive, triggerReasons, triggeredBy, user, workerId]);
 
   useEffect(() => {
@@ -985,6 +1056,28 @@ const WorkerDashboard = () => {
         </div>
       </nav>
 
+      {claimBlocked && (
+        <div className="bg-red-900/80 border border-red-500/50 text-red-200 px-4 py-3 mx-4 mt-4 rounded-xl">
+          <p className="font-semibold text-sm">⚠️ Suspicious Claim Detected — Claim Blocked</p>
+          {fraudFlags.map((flag) => (
+            <p key={flag.type} className="text-xs mt-1 text-red-300">
+              • [{flag.severity}] {flag.message}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {fraudFlags.length > 0 && !claimBlocked && (
+        <div className="bg-amber-900/80 border border-amber-500/50 text-amber-200 px-4 py-3 mx-4 mt-4 rounded-xl">
+          <p className="font-semibold text-sm">⚠️ Claim Flagged for Manual Review</p>
+          {fraudFlags.map((flag) => (
+            <p key={flag.type} className="text-xs mt-1 text-amber-300">
+              • [{flag.severity}] {flag.message}
+            </p>
+          ))}
+        </div>
+      )}
+
       <div className="container mx-auto px-4 py-8 space-y-7">
         <motion.div variants={fadeUp} custom={0} initial="hidden" animate="visible" className="flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
           <div>
@@ -1015,6 +1108,37 @@ const WorkerDashboard = () => {
         <div className="space-y-8">
           <section className="space-y-4 pt-2">
             <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">🔥 Your Coverage</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-2xl p-5 border border-emerald-400/30 bg-emerald-950/40 shadow-[0_0_18px_rgba(34,197,94,0.12)]">
+                <p className="text-xs uppercase tracking-wide text-emerald-200/80">Earnings Protected</p>
+                <p className="mt-2 text-2xl font-bold text-emerald-300">₹{approvedPayoutsTotal}</p>
+                <p className="text-xs text-emerald-100/70 mt-1">Sum of all approved payouts</p>
+              </div>
+
+              <div className="rounded-2xl p-5 border border-blue-400/30 bg-blue-950/40 shadow-[0_0_18px_rgba(59,130,246,0.12)]">
+                <p className="text-xs uppercase tracking-wide text-blue-200/80">Weekly Coverage</p>
+                <p className="mt-2 text-lg font-semibold text-blue-100">
+                  {resolvedCoveragePlan
+                    ? tx(language, resolvedCoveragePlan.name, planNameHindi[resolvedCoveragePlan.name] || resolvedCoveragePlan.name)
+                    : tx(language, "No active coverage", "कोई सक्रिय कवरेज नहीं")}
+                </p>
+                <p className="text-xs text-blue-100/70 mt-1">
+                  {coverageDaysRemaining !== null
+                    ? `${coverageDaysRemaining} day${coverageDaysRemaining === 1 ? "" : "s"} remaining`
+                    : tx(language, "Days remaining unavailable", "बचे हुए दिन उपलब्ध नहीं हैं")}
+                </p>
+              </div>
+
+              <div className="rounded-2xl p-5 border border-amber-400/30 bg-amber-950/40 shadow-[0_0_18px_rgba(245,158,11,0.12)]">
+                <p className="text-xs uppercase tracking-wide text-amber-200/80">This Week's Risk Level</p>
+                <div className="mt-3 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold tracking-wide border border-current/20 bg-black/20">
+                  <span className={rainImpactLevel === "HIGH" ? "text-red-300" : rainImpactLevel === "MEDIUM" ? "text-amber-300" : "text-emerald-300"}>
+                    {rainImpactLevel}
+                  </span>
+                </div>
+                <p className="text-xs text-amber-100/70 mt-2">Based on current live risk conditions</p>
+              </div>
+            </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="rounded-2xl p-6 border border-emerald-400/35 bg-[rgba(16,32,24,0.72)] shadow-[0_0_20px_rgba(34,197,94,0.14)]">
                 <p className="text-xs font-medium text-muted-foreground">Core Impact</p>
@@ -1068,8 +1192,13 @@ const WorkerDashboard = () => {
                   <p><span className="text-muted-foreground">Triggered by:</span> <span className="font-semibold text-foreground">{claimTriggersLabel}</span></p>
                 </div>
 
-                <div className="mt-2">
-                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => void refreshClaim()}>
+                <div className="mt-3">
+                  <Button
+                    size="sm"
+                    className="w-full sm:w-auto px-4 gap-2 bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg active:scale-[0.98] transition-all"
+                    onClick={() => void refreshClaim()}
+                  >
+                    <RotateCcw className="h-4 w-4" />
                     Refresh claim
                   </Button>
                 </div>

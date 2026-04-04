@@ -881,6 +881,174 @@ app.get("/api/payment/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+app.get("/api/admin/stats", async (req, res) => {
+  if (!requireDb(res)) return;
+  try {
+    const [workers, policies, claims, fraud] = await Promise.all([
+      dbPool.query("SELECT COUNT(*) FROM workers"),
+      dbPool.query("SELECT COUNT(*) FROM insurance_policies WHERE status='active'"),
+      dbPool.query("SELECT status, SUM(payout_amount) as total, COUNT(*) as count FROM claims GROUP BY status"),
+      dbPool.query("SELECT COUNT(*) FROM fraud_alerts WHERE resolved=false"),
+    ]);
+
+    const claimRows = claims.rows;
+    const approved = claimRows.find((r) => r.status === "approved");
+    const pending = claimRows.find((r) => r.status === "pending");
+    const rejected = claimRows.find((r) => r.status === "rejected");
+    const totalPayouts = Number(approved?.total || 0);
+    const activePoliciesCount = Number(policies.rows[0]?.count || 0);
+    const totalPremiums = activePoliciesCount * 22 * 4;
+    const lossRatio = totalPremiums > 0 ? Math.round((totalPayouts / totalPremiums) * 100) : 0;
+
+    return res.json({
+      totalWorkers: Number(workers.rows[0]?.count || 0),
+      activePolicies: activePoliciesCount,
+      totalClaims: claimRows.reduce((s, r) => s + Number(r.count), 0),
+      pendingClaims: Number(pending?.count || 0),
+      approvedClaims: Number(approved?.count || 0),
+      rejectedClaims: Number(rejected?.count || 0),
+      fraudCases: Number(fraud.rows[0]?.count || 0),
+      totalPayouts,
+      lossRatio,
+    });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+app.get("/api/admin/claims", async (req, res) => {
+  if (!requireDb(res)) return;
+  try {
+    const result = await dbPool.query("SELECT * FROM claims ORDER BY created_at DESC LIMIT 20");
+    return res.json({ claims: result.rows });
+  } catch {
+    return res.status(500).json({ error: "Failed" });
+  }
+});
+
+app.get("/api/admin/fraud-alerts", async (req, res) => {
+  if (!requireDb(res)) return;
+  try {
+    const result = await dbPool.query("SELECT * FROM fraud_alerts ORDER BY created_at DESC LIMIT 10");
+    return res.json({ alerts: result.rows });
+  } catch {
+    return res.status(500).json({ error: "Failed" });
+  }
+});
+
+app.get("/api/admin/high-risk-zones", async (req, res) => {
+  if (!requireDb(res)) return;
+  try {
+    const result = await dbPool.query(`
+      SELECT w.city, COUNT(c.id) as count,
+        CASE WHEN COUNT(c.id) > 10 THEN 'HIGH'
+             WHEN COUNT(c.id) > 5 THEN 'MEDIUM'
+             ELSE 'LOW' END as risk
+      FROM claims c
+      JOIN workers w ON w.id = c.worker_id
+      GROUP BY w.city
+      ORDER BY count DESC
+      LIMIT 6
+    `);
+    return res.json({ zones: result.rows });
+  } catch {
+    return res.status(500).json({ error: "Failed" });
+  }
+});
+
+app.post("/api/fraud/check", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const { worker_email, city, rain_mm, aqi, triggers } = req.body || {};
+  if (!worker_email) {
+    return res.status(400).json({ error: "worker_email is required" });
+  }
+
+  try {
+    const normalizedEmail = normalizeEmail(worker_email);
+    const flags = [];
+
+    const workerResult = await dbPool.query(
+      `SELECT id, city FROM workers WHERE LOWER(email) = $1 LIMIT 1`,
+      [normalizedEmail],
+    );
+    const worker = workerResult.rows[0];
+    if (!worker) {
+      return res.status(404).json({ error: "Worker not found" });
+    }
+
+    const recentClaim = await dbPool.query(
+      `SELECT id, created_at FROM claims
+       WHERE worker_id = $1
+       AND created_at > NOW() - INTERVAL '1 hour'
+       AND status != 'rejected'
+       ORDER BY created_at DESC LIMIT 1`,
+      [worker.id],
+    );
+    if (recentClaim.rows.length > 0) {
+      flags.push({
+        type: "DUPLICATE_CLAIM",
+        severity: "HIGH",
+        message: `Claim already filed ${Math.round((Date.now() - new Date(recentClaim.rows[0].created_at).getTime()) / 60000)} minutes ago`,
+      });
+    }
+
+    const registeredCity = String(worker.city || "").trim().toLowerCase();
+    const claimCity = String(city || "").trim().toLowerCase();
+    if (registeredCity && claimCity && registeredCity !== claimCity) {
+      flags.push({
+        type: "CITY_MISMATCH",
+        severity: "MEDIUM",
+        message: `Claim filed from ${city} but worker registered in ${worker.city}`,
+      });
+    }
+
+    const rainMm = Number(rain_mm || 0);
+    const aqiValue = Number(aqi || 0);
+    const hasWeatherTrigger = Array.isArray(triggers) && triggers.length > 0;
+    const weatherActuallyBad = rainMm > 10 || aqiValue > 150;
+
+    if (hasWeatherTrigger && !weatherActuallyBad) {
+      flags.push({
+        type: "FAKE_INACTIVITY",
+        severity: "HIGH",
+        message: `Claim triggered but live weather shows Rain=${rainMm}mm, AQI=${aqiValue} — conditions are normal`,
+      });
+    }
+
+    const isFraudulent = flags.some((f) => f.severity === "HIGH");
+    const isSuspicious = flags.length > 0;
+
+    if (isSuspicious) {
+      await dbPool.query(
+        `INSERT INTO fraud_alerts (worker_id, reason, flag_level, resolved)
+         VALUES ($1, $2, $3, FALSE)`,
+        [
+          worker.id,
+          flags.map((f) => f.message).join(" | "),
+          isFraudulent ? "HIGH" : "MEDIUM",
+        ],
+      ).catch(() => {
+        // non-blocking — fraud_alerts table may not exist yet
+      });
+    }
+
+    return res.json({
+      isFraudulent,
+      isSuspicious,
+      flags,
+      recommendation: isFraudulent
+        ? "BLOCK"
+        : isSuspicious
+          ? "REVIEW"
+          : "APPROVE",
+    });
+  } catch (err) {
+    console.error("Fraud check error:", err);
+    return res.status(500).json({ error: "Fraud check failed" });
+  }
+});
+
 const distPath = path.resolve("dist");
 const distIndexPath = path.resolve(distPath, "index.html");
 const hasBuiltFrontend = fs.existsSync(distIndexPath);

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
 import { getSession, setSession } from "@/lib/session";
-import { authenticateUser, validateEmailAuthenticity } from "@/lib/auth";
+import { ADMIN_DEMO_EMAIL, ADMIN_DEMO_PASSWORD, authenticateUser, validateEmailAuthenticity } from "@/lib/auth";
 import { fetchUserProfile, fetchWorkerPortalState, syncWorkerToDb } from "@/lib/dbApi";
 import { tx, useAppLanguage } from "@/lib/preferences";
 
@@ -24,6 +24,7 @@ const LoginPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loginMode, setLoginMode] = useState<"worker" | "admin">("worker");
   const navigate = useNavigate();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -110,7 +111,7 @@ const LoginPage = () => {
 
     setSession(nextSession);
 
-    navigate("/dashboard");
+    navigate(nextSession.role === "admin" ? "/admin" : "/dashboard");
   };
 
   return (
@@ -148,6 +149,38 @@ const LoginPage = () => {
 
           <h1 className="font-display text-2xl font-bold mb-1 text-foreground">{tx(language, "Sign in", "साइन इन")}</h1>
           <p className="text-muted-foreground text-sm mb-8">{tx(language, "Enter your credentials to access your account", "अपने खाते में जाने के लिए विवरण दर्ज करें")}</p>
+
+          <div className="mb-4 rounded-xl border border-border/60 bg-muted/20 p-1.5 grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMode("worker");
+                setError("");
+              }}
+              className={`rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${loginMode === "worker" ? "bg-blue-500/15 text-blue-300 border border-blue-400/40 shadow-sm" : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-background/40"}`}
+            >
+              Worker Login
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMode("admin");
+                setEmail(ADMIN_DEMO_EMAIL);
+                setPassword(ADMIN_DEMO_PASSWORD);
+                setError("");
+              }}
+              className={`rounded-lg px-3 py-2.5 text-sm font-semibold transition-all ${loginMode === "admin" ? "bg-red-500/15 text-red-300 border border-red-400/40 shadow-sm" : "border border-transparent text-muted-foreground hover:text-foreground hover:bg-background/40"}`}
+            >
+              Admin Login
+            </button>
+          </div>
+
+          <p className="mb-6 text-xs text-muted-foreground">
+            {loginMode === "admin"
+              ? "Admin mode selected: demo admin credentials are prefilled."
+              : "Worker mode selected: sign in with your registered worker account."}
+          </p>
+
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
