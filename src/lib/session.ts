@@ -24,6 +24,7 @@ export interface UserSession {
   phone?: string;
   vehicleType?: string;
   emergencyContact?: string;
+  _sessionToken?: number;
   role: UserRole;
   policyActive: boolean;
   purchasedPlans: string[];
@@ -60,6 +61,7 @@ export const getSession = (): UserSession | null => {
       phone: parsed.phone || "",
       vehicleType: parsed.vehicleType || "",
       emergencyContact: parsed.emergencyContact || "",
+      _sessionToken: typeof parsed._sessionToken === "number" ? parsed._sessionToken : 0,
       role: parsed.role === "admin" ? "admin" : "worker",
       policyActive: Boolean(parsed.policyActive),
       purchasedPlans: Array.isArray(parsed.purchasedPlans) ? parsed.purchasedPlans : [],
@@ -79,7 +81,11 @@ export const getSession = (): UserSession | null => {
 };
 
 export const setSession = (session: UserSession) => {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  const withToken: UserSession = {
+    ...session,
+    _sessionToken: Date.now(),
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(withToken));
   window.dispatchEvent(new Event(SESSION_UPDATED_EVENT));
 };
 

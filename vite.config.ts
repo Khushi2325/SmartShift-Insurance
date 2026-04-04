@@ -7,13 +7,14 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 5174,
+    strictPort: true,
     hmr: {
       overlay: false,
     },
     proxy: {
       "/api": {
-        target: "http://localhost:5174",
+        target: "http://localhost:8080",
         changeOrigin: true,
       },
     },

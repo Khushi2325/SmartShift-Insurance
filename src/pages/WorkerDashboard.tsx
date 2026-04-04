@@ -8,7 +8,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { clearSession, getSession, setSession, UserSession } from "@/lib/session";
+import { clearSession, getSession, setSession, SESSION_UPDATED_EVENT, UserSession } from "@/lib/session";
 import PayoutStatusCard from "@/components/PayoutStatusCard";
 import {
   ClaimLifecycle,
@@ -591,7 +591,21 @@ const WorkerDashboard = () => {
   useEffect(() => {
     if (!user) return;
     setDemoState(getWorkerDemoState(user));
-  }, [user?.email]);
+  }, [user?.email, user?._sessionToken]);
+
+  useEffect(() => {
+    const syncSessionUser = () => {
+      setUser(getSession());
+    };
+
+    window.addEventListener("storage", syncSessionUser);
+    window.addEventListener(SESSION_UPDATED_EVENT, syncSessionUser);
+
+    return () => {
+      window.removeEventListener("storage", syncSessionUser);
+      window.removeEventListener(SESSION_UPDATED_EVENT, syncSessionUser);
+    };
+  }, []);
 
   useEffect(() => {
     if (!user?.email) return;

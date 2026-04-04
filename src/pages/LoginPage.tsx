@@ -42,10 +42,10 @@ const LoginPage = () => {
       return;
     }
 
-    const existing = getSession();
-    let nextSession = existing && existing.email.toLowerCase() === login.session.email.toLowerCase()
-      ? { ...existing, ...login.session, preferences: existing.preferences || login.session.preferences }
-      : login.session;
+    let nextSession = {
+      ...login.session,
+      _sessionToken: Date.now(),
+    };
 
     try {
       await syncWorkerToDb({
@@ -95,13 +95,18 @@ const LoginPage = () => {
               purchasedPlans: [persistedPlanId],
             };
           }
-        } catch {
-          // Fall back to policy bundle if profile fetch is unavailable.
+        } catch (err) {
+          console.error("Portal/Profile fetch failed:", err);
         }
-      } catch {
-        // Fall back to the session data if the portal fetch is temporarily unavailable.
+      } catch (err) {
+        console.error("Portal/Profile fetch failed:", err);
       }
     }
+
+    console.log("=== LOGIN DEBUG ===");
+    console.log("policyActive:", nextSession.policyActive);
+    console.log("purchasedPlans:", nextSession.purchasedPlans);
+    console.log("_sessionToken:", nextSession._sessionToken);
 
     setSession(nextSession);
 
