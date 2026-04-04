@@ -5,12 +5,17 @@ export interface RegisteredUser {
   email: string;
   password: string;
   city: string;
+  persona_type: "rain" | "pollution" | "normal";
+  deliveryPartner: "Zomato" | "Swiggy" | "Amazon" | "Blinkit";
   phone?: string;
   vehicleType?: string;
   emergencyContact?: string;
   role: "worker" | "admin";
   createdAt: string;
 }
+
+export const ADMIN_DEMO_EMAIL = "admin@smartshift.local";
+export const ADMIN_DEMO_PASSWORD = "SmartShift@Admin2026";
 
 const USERS_KEY = "smartshift_users";
 
@@ -55,12 +60,13 @@ export const validateEmailAuthenticity = (email: string): { valid: boolean; mess
 
 export const registerUser = (payload: Omit<RegisteredUser, "createdAt">): { ok: boolean; message?: string } => {
   const users = getUsers();
-  const exists = users.some((user) => user.email.toLowerCase() === payload.email.toLowerCase());
+  const normalizedEmail = payload.email.trim().toLowerCase();
+  const exists = users.some((user) => user.email.toLowerCase() === normalizedEmail);
   if (exists) {
     return { ok: false, message: "This email is already registered. Please log in." };
   }
 
-  users.push({ ...payload, createdAt: new Date().toISOString() });
+  users.push({ ...payload, email: normalizedEmail, createdAt: new Date().toISOString() });
   saveUsers(users);
   return { ok: true };
 };
@@ -69,8 +75,38 @@ export const authenticateUser = (
   email: string,
   password: string,
 ): { ok: boolean; message?: string; session?: UserSession } => {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (normalizedEmail === ADMIN_DEMO_EMAIL && password === ADMIN_DEMO_PASSWORD) {
+    return {
+      ok: true,
+      session: {
+        name: "Admin",
+        email: ADMIN_DEMO_EMAIL,
+        city: "Mumbai",
+        persona_type: "normal",
+        deliveryPartner: "Zomato",
+        phone: "",
+        vehicleType: "",
+        emergencyContact: "",
+        role: "admin",
+        policyActive: false,
+        purchasedPlans: [],
+        preferences: {
+          weatherAlerts: true,
+          payoutAlerts: true,
+          shiftReminders: true,
+          marketingEmails: false,
+          aiRecommendationMode: "balanced",
+          language: "English",
+          theme: "dark",
+        },
+      },
+    };
+  }
+
   const users = getUsers();
-  const user = users.find((item) => item.email.toLowerCase() === email.trim().toLowerCase());
+  const user = users.find((item) => item.email.toLowerCase() === normalizedEmail);
   if (!user) {
     return { ok: false, message: "Account not found. Please sign up first." };
   }
@@ -85,6 +121,8 @@ export const authenticateUser = (
       name: user.name,
       email: user.email,
       city: user.city,
+      persona_type: user.persona_type || "rain",
+      deliveryPartner: user.deliveryPartner || "Zomato",
       phone: user.phone || "",
       vehicleType: user.vehicleType || "",
       emergencyContact: user.emergencyContact || "",

@@ -6,7 +6,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, Legend } from "recharts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { clearSession, getSession, UserSession } from "@/lib/session";
-import { getFlaggedUsers } from "@/lib/insuranceDemo";
+import { approveClaimReview, getClaimReviews, getFlaggedUsers, getRegisteredWorkerProfiles, rejectClaimReview } from "@/lib/insuranceDemo";
+import { reviewClaimOnDb } from "@/lib/dbApi";
 import { tx, useAppLanguage } from "@/lib/preferences";
 
 const fadeUp = {
@@ -68,9 +69,15 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const [user] = useState<UserSession | null>(() => getSession());
   const [flaggedUsers, setFlaggedUsers] = useState(() => getFlaggedUsers());
+  const [registeredWorkers, setRegisteredWorkers] = useState(() => getRegisteredWorkerProfiles());
+  const [claimReviews, setClaimReviews] = useState(() => getClaimReviews());
 
   useEffect(() => {
-    const sync = () => setFlaggedUsers(getFlaggedUsers());
+    const sync = () => {
+      setFlaggedUsers(getFlaggedUsers());
+      setRegisteredWorkers(getRegisteredWorkerProfiles());
+      setClaimReviews(getClaimReviews());
+    };
     sync();
     const intervalId = window.setInterval(sync, 2000);
     window.addEventListener("storage", sync);
@@ -91,6 +98,62 @@ const AdminDashboard = () => {
       };
     });
   }, [flaggedUsers.length]);
+
+  const pendingClaims = useMemo(() => claimReviews.filter((claim) => claim.status === "Pending Approval"), [claimReviews]);
+
+  const claimReviewByWorker = useMemo(() => {
+    const latestByWorker = new Map<string, (typeof claimReviews)[number]>();
+    [...claimReviews].forEach((claim) => {
+      if (!latestByWorker.has(claim.workerEmail)) {
+        latestByWorker.set(claim.workerEmail, claim);
+      }
+    });
+    return latestByWorker;
+  }, [claimReviews]);
+
+  const refreshReviewData = () => {
+    setFlaggedUsers(getFlaggedUsers());
+    setRegisteredWorkers(getRegisteredWorkerProfiles());
+    setClaimReviews(getClaimReviews());
+  };
+
+  const handleApproveClaim = (claimId: string) => {
+    const claim = claimReviews.find((item) => item.id === claimId);
+    if (!claim) return;
+
+    if (claim.dbClaimId) {
+      void reviewClaimOnDb({
+        claimId: claim.dbClaimId,
+        status: "Approved",
+        reviewer: user?.name || "Admin",
+        review_reason: `Approved by ${user?.name || "Admin"}`,
+      }).catch(() => {
+        // Keep local approval flow working if the DB update is temporarily unavailable.
+      });
+    }
+
+    approveClaimReview(claimId, user?.name || "Admin");
+    refreshReviewData();
+  };
+
+  const handleRejectClaim = (claimId: string) => {
+    const claim = claimReviews.find((item) => item.id === claimId);
+    if (!claim) return;
+
+    if (claim.dbClaimId) {
+      void reviewClaimOnDb({
+        claimId: claim.dbClaimId,
+        status: "Rejected",
+        reviewer: user?.name || "Admin",
+        review_reason: "Rejected by admin after review",
+      }).catch(() => {
+        // Keep local rejection flow working if the DB update is temporarily unavailable.
+      });
+    }
+
+    rejectClaimReview(claimId, user?.name || "Admin", "Rejected by admin after review");
+    refreshReviewData();
+  };
 
   const handleLogout = () => {
     clearSession();
@@ -276,71 +339,154 @@ const AdminDashboard = () => {
         )}
 
         {activeTab === "claims" && (
-          <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="glass-card p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display font-semibold text-foreground">{tx(language, "Fraud Review Queue", "फ्रॉड समीक्षा कतार")}</h3>
-              <span className="text-xs px-2 py-1 rounded-full bg-risk-high-bg text-risk-high font-medium">{flaggedUsers.length} {tx(language, "user(s) under review", "यूज़र समीक्षा में")}</span>
+          <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="space-y-6">
+            <div className="glass-card p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-display font-semibold text-foreground">{tx(language, "Claim Approval Queue", "क्लेम अप्रूवल कतार")}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{tx(language, "AI pre-check narrows claims, admin approves the final payout.", "AI पहले जांच करता है, अंतिम पेआउट एडमिन approve करता है।")}</p>
+                </div>
+                <span className="text-xs px-2 py-1 rounded-full bg-risk-high-bg text-risk-high font-medium">{pendingClaims.length} {tx(language, "pending claims", "लंबित क्लेम")}</span>
+              </div>
+
+              <div className="space-y-3">
+                {pendingClaims.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border/80 p-4 text-sm text-muted-foreground">
+                    {tx(language, "No claims waiting for approval right now.", "अभी approval के लिए कोई क्लेम नहीं है।")}
+                  </div>
+                )}
+
+                {pendingClaims.map((claim) => (
+                  <div key={claim.id} className="rounded-xl border border-amber-300/25 bg-amber-500/5 p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-foreground">{claim.workerName}</span>
+                          <span className="text-xs text-muted-foreground">· {claim.workerEmail}</span>
+                          <span className="text-xs text-muted-foreground">· {claim.city}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{claim.id} · {new Date(claim.requestedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap justify-end">
+                        <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">AI: {claim.aiVerdict}</span>
+                        <span className="text-xs px-2 py-1 rounded-full border border-amber-300/40 bg-amber-500/10 text-amber-300 font-medium">{claim.status}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-3 gap-3 text-xs">
+                      <div className="rounded-lg bg-background/50 border border-border/60 p-3 space-y-1">
+                        <p className="text-muted-foreground">AI Validation</p>
+                        <p className={claim.activePolicy ? "text-accent" : "text-risk-medium"}>{claim.activePolicy ? "✔ Active policy" : "✖ Active policy"}</p>
+                        <p className={claim.validTimeWindow ? "text-accent" : "text-risk-medium"}>{claim.validTimeWindow ? "✔ Valid time window" : "✖ Valid time window"}</p>
+                        <p className={claim.thresholdMet ? "text-accent" : "text-risk-medium"}>{claim.thresholdMet ? "✔ Threshold met" : "✖ Threshold not met"}</p>
+                      </div>
+                      <div className="rounded-lg bg-background/50 border border-border/60 p-3 space-y-1">
+                        <p className="text-muted-foreground">Payout Estimate</p>
+                        <p className="text-foreground font-semibold">₹{claim.payoutAmount}</p>
+                        <p className="text-muted-foreground">Loss: ₹{claim.loss}</p>
+                        <p className="text-muted-foreground">Coverage cap: ₹{claim.coverageLimit}</p>
+                      </div>
+                      <div className="rounded-lg bg-background/50 border border-border/60 p-3 space-y-1">
+                        <p className="text-muted-foreground">Risk Context</p>
+                        <p className="text-foreground">Score: {claim.riskScore.toFixed(2)} ({claim.riskLevel})</p>
+                        <p className="text-muted-foreground">Rain: {claim.rainMm} mm</p>
+                        <p className="text-muted-foreground">Activity: {claim.activity}%</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-xs text-muted-foreground">{claim.fraudReason || "Ready for admin decision. No wallet credit yet."}</p>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" onClick={() => handleApproveClaim(claim.id)} className="gap-2">
+                          <CheckCircle2 className="w-4 h-4" /> Approve
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleRejectClaim(claim.id)} className="gap-2 text-risk-high border-risk-high/30">
+                          <XCircle className="w-4 h-4" /> Reject
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="space-y-2">
-              {flaggedUsers.length === 0 && (
-                <div className="rounded-lg border border-dashed border-border/80 p-4 text-sm text-muted-foreground">
-                  {tx(language, "No workers flagged yet. Trigger fraud simulation from worker dashboard to populate this queue.", "अभी कोई वर्कर फ्लैग नहीं हुआ। इस सूची को भरने के लिए वर्कर डैशबोर्ड से फ्रॉड सिमुलेशन चलाएं।")}
+
+            <div className="glass-card p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-display font-semibold text-foreground">{tx(language, "Registered Workers", "पंजीकृत वर्कर्स")}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{tx(language, "Latest worker profiles synced from the demo session.", "डेमो सेशन से सिंक हुई लेटेस्ट वर्कर प्रोफाइल्स।")}</p>
                 </div>
-              )}
-              {flaggedUsers.map((worker) => (
-                <div key={worker.email} className="flex items-center justify-between p-4 rounded-lg bg-risk-medium-bg/30 border border-risk-medium/20">
-                  <div className="flex items-center gap-4">
-                    <AlertTriangle className="w-4 h-4 text-risk-medium" />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{worker.name}</span>
-                        <span className="text-xs text-muted-foreground">· {worker.email}</span>
-                        <span className="text-xs text-muted-foreground">· {worker.city || tx(language, "Unknown city", "अज्ञात शहर")}</span>
+                <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">{registeredWorkers.length} {tx(language, "workers", "वर्कर्स")}</span>
+              </div>
+              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {registeredWorkers.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border/80 p-4 text-sm text-muted-foreground md:col-span-2 xl:col-span-3">
+                    {tx(language, "No worker profiles synced yet. Open a worker session to populate this registry.", "अभी कोई वर्कर प्रोफाइल सिंक नहीं हुई। इस रजिस्ट्री को भरने के लिए वर्कर session खोलें।")}
+                  </div>
+                )}
+                {registeredWorkers.map((worker) => {
+                  const latestReview = claimReviewByWorker.get(worker.email);
+                  const isValid = latestReview?.status === "Approved";
+                  return (
+                    <div key={worker.email} className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">{worker.name}</p>
+                          <p className="text-xs text-muted-foreground">{worker.email}</p>
+                        </div>
+                        <span className={`text-[10px] px-2 py-1 rounded-full font-medium ${isValid ? "bg-accent/10 text-accent" : latestReview?.status === "Rejected" ? "bg-risk-high-bg text-risk-high" : "bg-risk-medium-bg text-risk-medium"}`}>
+                          {latestReview ? latestReview.status : "Not reviewed"}
+                        </span>
                       </div>
-                      <span className="text-xs text-risk-medium font-medium">{worker.reason}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-risk-medium-bg text-risk-medium">{tx(language, "Under Review", "समीक्षा में")}</span>
-                    <div className="text-xs text-muted-foreground mt-1">{new Date(worker.timestamp).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
-                  </div>
-                </div>
-              ))}
-              {flaggedClaims.map(c => (
-                <div key={c.id} className="flex items-center justify-between p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
-                  <div className="flex items-center gap-4">
-                    <AlertTriangle className="w-4 h-4 text-risk-high" />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{c.id}</span>
-                        <span className="text-xs text-muted-foreground">· {c.worker}</span>
-                        <span className="text-xs text-muted-foreground">· {c.city}</span>
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <p>City: {worker.city}</p>
+                        <p>Partner: {worker.deliveryPartner}</p>
+                        <p>Persona: {worker.personaType}</p>
+                        <p>Last seen: {new Date(worker.lastSeenAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
                       </div>
-                      <span className="text-xs text-risk-high font-medium">{c.reason}</span>
+                      <div className="text-xs rounded-lg border border-border/60 bg-background/40 p-2">
+                        <p className="text-muted-foreground">AI validity</p>
+                        <p className={isValid ? "text-accent" : latestReview?.status === "Rejected" ? "text-risk-high" : "text-amber-300"}>
+                          {isValid ? "Eligible for payout after admin approval" : latestReview?.status === "Rejected" ? "Not valid for payout" : "Awaiting claim review"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="glass-card p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-display font-semibold text-foreground">{tx(language, "Fraud Review Queue", "फ्रॉड समीक्षा कतार")}</h3>
+                <span className="text-xs px-2 py-1 rounded-full bg-risk-high-bg text-risk-high font-medium">{flaggedUsers.length} {tx(language, "user(s) under review", "यूज़र समीक्षा में")}</span>
+              </div>
+              <div className="space-y-2">
+                {flaggedUsers.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border/80 p-4 text-sm text-muted-foreground">
+                    {tx(language, "No workers flagged yet. Trigger fraud simulation from worker dashboard to populate this queue.", "अभी कोई वर्कर फ्लैग नहीं हुआ। इस सूची को भरने के लिए वर्कर डैशबोर्ड से फ्रॉड सिमुलेशन चलाएं।")}
+                  </div>
+                )}
+                {flaggedUsers.map((worker) => (
+                  <div key={worker.email} className="flex items-center justify-between p-4 rounded-lg bg-risk-medium-bg/30 border border-risk-medium/20">
+                    <div className="flex items-center gap-4">
+                      <AlertTriangle className="w-4 h-4 text-risk-medium" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-foreground">{worker.name}</span>
+                          <span className="text-xs text-muted-foreground">· {worker.email}</span>
+                          <span className="text-xs text-muted-foreground">· {worker.city || tx(language, "Unknown city", "अज्ञात शहर")}</span>
+                        </div>
+                        <span className="text-xs text-risk-medium font-medium">{worker.reason}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-risk-medium-bg text-risk-medium">{tx(language, "Under Review", "समीक्षा में")}</span>
+                      <div className="text-xs text-muted-foreground mt-1">{new Date(worker.timestamp).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <span className="text-sm font-semibold text-foreground">{c.amount}</span>
-                      <div className="text-xs text-muted-foreground">{c.time}</div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-mono font-bold text-risk-high">Score: {c.fraudScore}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-accent hover:bg-accent/10">
-                        <CheckCircle2 className="w-4 h-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-risk-high hover:bg-risk-high-bg">
-                        <XCircle className="w-4 h-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground hover:bg-muted">
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </motion.div>
         )}

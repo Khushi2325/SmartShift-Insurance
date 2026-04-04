@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Shield, Zap, Brain, CloudRain, Wind, Thermometer, ArrowRight, CheckCircle2, BarChart3 } from "lucide-react";
+import { Shield, Zap, Brain, CloudRain, ArrowRight, CheckCircle2, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { getSession } from "@/lib/session";
@@ -12,7 +12,7 @@ const fadeUp = {
 
 const features = [
   { icon: Brain, title: "AI Risk Prediction", desc: "Real-time disruption risk scoring using weather, AQI, and environmental signals." },
-  { icon: Zap, title: "Instant Payouts", desc: "Parametric triggers auto-process payouts when conditions cross thresholds." },
+  { icon: Zap, title: "Review-Backed Payouts", desc: "Claims are checked by AI and approved before money moves." },
   { icon: Shield, title: "Fraud Protection", desc: "Multi-signal verification with behavioral analysis and graph-based detection." },
   { icon: BarChart3, title: "Smart Shifts", desc: "AI-recommended safer working windows to reduce exposure and maximize earnings." },
 ];
@@ -21,12 +21,12 @@ const steps = [
   { num: "01", title: "Sign Up & Select City", desc: "Register and choose your working city and preferences." },
   { num: "02", title: "Get Risk Assessment", desc: "AI evaluates weather, AQI, and conditions to generate your risk score." },
   { num: "03", title: "Activate Coverage", desc: "Pay a dynamic premium and activate protection for your shift window." },
-  { num: "04", title: "Auto-Protected", desc: "If conditions cross thresholds, payout triggers automatically. No claims needed." },
+  { num: "04", title: "Admin Approved", desc: "If conditions cross thresholds, the claim waits for final approval before payout." },
 ];
 
 const featureHindi: Record<string, { title: string; desc: string }> = {
   "AI Risk Prediction": { title: "AI जोखिम पूर्वानुमान", desc: "मौसम, AQI और पर्यावरण संकेतों से रियल-टाइम जोखिम स्कोरिंग।" },
-  "Instant Payouts": { title: "तुरंत पेआउट", desc: "ट्रिगर कंडीशन पूरी होते ही पेआउट ऑटो-प्रोसेस होता है।" },
+  "Review-Backed Payouts": { title: "समीक्षा-आधारित पेआउट", desc: "क्लेम पहले AI जांच से गुजरता है, फिर approval के बाद पेआउट होता है।" },
   "Fraud Protection": { title: "फ्रॉड सुरक्षा", desc: "व्यवहार विश्लेषण और मल्टी-सिग्नल वेरिफिकेशन से मजबूत सुरक्षा।" },
   "Smart Shifts": { title: "स्मार्ट शिफ्ट्स", desc: "कम जोखिम और बेहतर कमाई के लिए AI सुझाए सुरक्षित समय।" },
 };
@@ -35,7 +35,7 @@ const stepHindi: Record<string, { title: string; desc: string }> = {
   "Sign Up & Select City": { title: "साइन अप करें और शहर चुनें", desc: "रजिस्टर करें और अपना कार्य शहर व प्राथमिकताएं चुनें।" },
   "Get Risk Assessment": { title: "जोखिम मूल्यांकन पाएं", desc: "AI मौसम और AQI देखकर आपका जोखिम स्कोर बनाता है।" },
   "Activate Coverage": { title: "कवरेज सक्रिय करें", desc: "डायनैमिक प्रीमियम देकर अपनी शिफ्ट सुरक्षा सक्रिय करें।" },
-  "Auto-Protected": { title: "ऑटो-सुरक्षित", desc: "शर्त पूरी होने पर पेआउट अपने आप ट्रिगर होता है।" },
+  "Admin Approved": { title: "एडमिन अप्रूव्ड", desc: "शर्त पूरी होने पर क्लेम approval queue में जाता है और फिर पेआउट होता है।" },
 };
 
 const LandingPage = () => {
@@ -78,123 +78,82 @@ const LandingPage = () => {
         </div>
       </nav>
 
-      {/* Hero Section - Logo-First Design */}
-      <section className="relative pt-6 pb-10 px-4 min-h-[88vh] flex flex-col items-center justify-center">
-        <div className="container mx-auto max-w-6xl flex flex-col items-center justify-center">
-          {/* LARGE CENTERED LOGO - Main Hero Element */}
-          <motion.div
-            initial={{ opacity: 0, y: 40, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 1, ease: "easeOut" }}
-            className="relative mb-0 z-10"
-          >
-            {/* Glow aura - larger and more pronounced */}
-            <div className="absolute inset-0 rounded-full" 
-              style={{
-                background: "radial-gradient(circle, rgba(37, 99, 235, 0.5), rgba(99, 102, 241, 0.2), transparent)",
-                width: "450px",
-                height: "450px",
-                left: "50%",
-                top: "50%",
-                transform: "translate(-50%, -50%)",
-                filter: "blur(80px)",
-                zIndex: -1,
-              }}
-            />
-            
-            {/* Animated glow pulse */}
-            <motion.div
-              animate={{
-                opacity: [0.3, 0.6, 0.3],
-                scale: [1, 1.15, 1],
-              }}
-              transition={{
-                duration: 4,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-              className="absolute inset-0 rounded-full pointer-events-none"
-              style={{
-                background: "radial-gradient(circle, rgba(37, 99, 235, 0.3), transparent 70%)",
-                width: "380px",
-                height: "380px",
-                left: "50%",
-                top: "50%",
-                transform: "translate(-50%, -50%)",
-                filter: "blur(60px)",
-              }}
-            />
-
-            {/* Logo */}
-            <motion.img
-              src="/logo%202.png"
-              alt="SmartShift Insurance"
-              className="h-[24rem] w-[24rem] md:h-[30rem] md:w-[30rem] object-contain relative z-10 drop-shadow-2xl -mb-16 md:-mb-24"
-              animate={{
-                y: [0, -20, 0],
-              }}
-              transition={{
-                duration: 5,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-              style={{
-                filter: "drop-shadow(0 0 60px rgba(37, 99, 235, 0.8)) drop-shadow(0 0 100px rgba(99, 102, 241, 0.4))",
-              }}
-            />
-          </motion.div>
-
-          {/* SMALLER TEXT - Secondary */}
+      {/* Hero Section */}
+      <section className="relative pt-24 pb-16 px-4 min-h-[78vh] flex items-center">
+        <div className="container mx-auto max-w-6xl grid lg:grid-cols-2 gap-10 items-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="text-center mb-5 max-w-3xl -mt-2 md:-mt-4"
+            transition={{ duration: 0.7 }}
+            className="space-y-6"
           >
-            {/* Badge */}
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-blue-500/20 to-cyan-500/20 border border-blue-500/40 backdrop-blur-md mb-3">
-              <Zap className="w-4 h-4 text-blue-400" />
-              <span className="text-sm font-medium text-blue-300">{tx(language, "AI-Powered Parametric Insurance", "AI-संचालित पैरामीट्रिक बीमा")}</span>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-400/40 bg-blue-500/10 text-blue-200 text-xs font-medium">
+              <Zap className="w-3.5 h-3.5" />
+              AI-powered weather risk protection
             </div>
 
-            {/* Heading - Reduced size */}
-            <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight leading-tight text-white mb-3">
-              {tx(language, "Protect Your Income,", "अपनी आय सुरक्षित रखें,")}
-            </h1>
-            <h1 className="font-display text-3xl md:text-4xl font-bold tracking-tight leading-tight bg-gradient-to-r from-cyan-400 via-blue-400 to-cyan-400 bg-clip-text text-transparent mb-4">
-              {tx(language, "Automatically", "अपने आप")}
+            <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight">
+              SmartShift Insurance
             </h1>
 
-            {/* Description - Smaller size */}
-            <p className="text-gray-300 text-base md:text-lg max-w-2xl mx-auto mb-6 leading-relaxed">
-              {tx(language, "SmartShift monitors weather, air quality, and environmental conditions and pays you instantly when disruptions prevent you from working.", "SmartShift मौसम, हवा की गुणवत्ता और पर्यावरण की स्थिति को मॉनिटर करता है और रुकावट होने पर तुरंत भुगतान करता है।")}
+            <p className="text-lg text-gray-300 max-w-2xl">
+              AI-powered income protection for delivery riders facing weather disruptions.
             </p>
+            <p className="text-sm text-gray-400 max-w-xl">
+              Helping riders in cities like Mumbai where heavy rain can directly impact daily earnings.
+            </p>
+            <div className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-3 text-cyan-100 text-sm font-medium shadow-[0_0_28px_rgba(34,211,238,0.18)]">
+              <CloudRain className="w-4 h-4" /> "Up to 30% income loss during heavy rain days"
+            </div>
+            <p className="text-xs text-cyan-100/90 font-medium">💡 Covers up to 30% income loss during high-risk weather conditions</p>
 
-            {/* CTA Buttons */}
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.5 }}
-              className="flex items-center justify-center gap-3 flex-wrap"
-            >
+            <div className="flex items-center gap-3 flex-wrap">
               <Link to={session ? dashboardPath : "/register"}>
-                <Button
-                  size="lg"
-                  className="gap-2 px-6 h-11 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-semibold rounded-lg shadow-lg shadow-blue-500/50 hover:shadow-blue-500/70 transition-all duration-300"
-                >
-                  {session ? tx(language, "Open Dashboard", "डैशबोर्ड खोलें") : tx(language, "Start Protection", "सुरक्षा शुरू करें")} <ArrowRight className="w-4 h-4" />
+                <Button size="lg" className="gap-2 px-6 h-11 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-semibold rounded-lg">
+                  {session ? tx(language, "Open Dashboard", "डैशबोर्ड खोलें") : tx(language, "Start Protection Now", "अभी सुरक्षा शुरू करें")} <ArrowRight className="w-4 h-4" />
                 </Button>
               </Link>
               <Link to={dashboardPath}>
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="px-6 h-11 border-blue-500/50 text-blue-300 hover:bg-blue-500/10 font-semibold rounded-lg transition-all duration-300"
-                >
+                <Button variant="outline" size="lg" className="px-6 h-11 border-blue-500/50 text-blue-300 hover:bg-blue-500/10 font-semibold rounded-lg">
                   {tx(language, "View Demo", "डेमो देखें")}
                 </Button>
               </Link>
-            </motion.div>
+            </div>
+            <p className="text-xs text-gray-300">Trusted by delivery partners in high-risk cities</p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 28 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
+            className="relative flex items-center justify-center"
+          >
+            <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.35),rgba(8,47,73,0.05),transparent)] blur-2xl" />
+            <img src="/logo%202.png" alt="SmartShift Insurance" className="h-72 w-72 md:h-96 md:w-96 object-contain drop-shadow-2xl" />
+          </motion.div>
+        </div>
+      </section>
+
+      {/* Who Is This For */}
+      <section className="py-14 px-4">
+        <div className="container mx-auto max-w-4xl">
+          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="rounded-2xl border border-blue-500/20 bg-slate-900/35 p-6 md:p-8">
+            <h2 className="font-display text-2xl md:text-3xl font-bold text-white mb-2">Who is this for?</h2>
+            <p className="text-sm text-gray-400 mb-5">Delivery riders working in cities where disruption risk stays high across the week.</p>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 text-gray-200">
+                <CheckCircle2 className="w-4 h-4 text-cyan-300" />
+                <span>Heavy rainfall disrupts daily work</span>
+              </div>
+              <div className="flex items-center gap-3 text-gray-200">
+                <CheckCircle2 className="w-4 h-4 text-cyan-300" />
+                <span>Flooded roads stop deliveries</span>
+              </div>
+              <div className="flex items-center gap-3 text-gray-200">
+                <CheckCircle2 className="w-4 h-4 text-cyan-300" />
+                <span>Earnings become unpredictable</span>
+              </div>
+            </div>
           </motion.div>
         </div>
       </section>
@@ -210,7 +169,7 @@ const LandingPage = () => {
             className="text-center mb-16"
           >
             <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">{tx(language, "How SmartShift Protects You", "SmartShift आपको कैसे सुरक्षित रखता है")}</h2>
-            <p className="text-gray-400 max-w-xl mx-auto">{tx(language, "Four intelligent layers working together to keep gig workers financially safe.", "चार स्मार्ट लेयर्स मिलकर गिग वर्कर्स को आर्थिक रूप से सुरक्षित रखते हैं।")}</p>
+            <p className="text-gray-400 max-w-xl mx-auto">{tx(language, "Four intelligent layers working together to protect riders in rain-heavy cities.", "चार स्मार्ट लेयर्स मिलकर बारिश-प्रभावित शहरों के राइडर्स को आर्थिक रूप से सुरक्षित रखते हैं।")}</p>
           </motion.div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -319,7 +278,7 @@ const LandingPage = () => {
             className="text-center"
           >
             <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">{tx(language, "Ready to Protect Your Earnings?", "क्या आप अपनी कमाई सुरक्षित करने के लिए तैयार हैं?")}</h2>
-            <p className="text-gray-400 mb-8 text-lg">{tx(language, "Join thousands of gig workers who never worry about weather disruptions again.", "हज़ारों गिग वर्कर्स से जुड़ें जो अब मौसम रुकावटों की चिंता नहीं करते।")}</p>
+            <p className="text-gray-400 mb-8 text-lg">{tx(language, "Built for workers affected by weather disruptions in cities like Mumbai.", "मुंबई जैसे शहरों में मौसम रुकावटों से प्रभावित कामगारों के लिए बनाया गया।")}</p>
             <Link to={session ? dashboardPath : "/register"}>
               <Button
                 size="lg"

@@ -1,4 +1,5 @@
 export type UserRole = "worker" | "admin";
+export type PersonaType = "rain" | "pollution" | "normal";
 
 export type AiRecommendationMode = "balanced" | "safety-first" | "earnings-first";
 export type AppLanguage = "English" | "Hindi";
@@ -18,6 +19,8 @@ export interface UserSession {
   name: string;
   email: string;
   city: string;
+  persona_type: PersonaType;
+  deliveryPartner: "Zomato" | "Swiggy" | "Amazon" | "Blinkit";
   phone?: string;
   vehicleType?: string;
   emergencyContact?: string;
@@ -52,6 +55,8 @@ export const getSession = (): UserSession | null => {
       name: parsed.name,
       email: parsed.email,
       city: parsed.city || "",
+      persona_type: parsed.persona_type === "pollution" || parsed.persona_type === "normal" ? parsed.persona_type : "rain",
+      deliveryPartner: parsed.deliveryPartner === "Swiggy" || parsed.deliveryPartner === "Amazon" || parsed.deliveryPartner === "Blinkit" ? parsed.deliveryPartner : "Zomato",
       phone: parsed.phone || "",
       vehicleType: parsed.vehicleType || "",
       emergencyContact: parsed.emergencyContact || "",

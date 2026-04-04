@@ -6,14 +6,49 @@ export type FraudScenario = "none" | "sudden-jump" | "static-location";
 
 export interface RiskMetrics {
   rainfallMm: number;
+  rainProbability: number;
   aqi: number;
+  temperature: number;
+  activity?: number;
+}
+
+export interface RiskBreakdown {
+  rainWeight: number;
+  aqiWeight: number;
+  tempWeight: number;
+  rainFactor: number;
+  aqiFactor: number;
+  tempFactor: number;
+  rainContribution: number;
+  aqiContribution: number;
+  tempContribution: number;
+}
+
+export interface RiskResult {
+  riskScore: number;
+  riskLevel: RiskLevel;
+  breakdown: RiskBreakdown;
+}
+
+export interface RiskForecastPoint {
+  hour: string;
+  riskScore: number;
+  riskLevel: RiskLevel;
+}
+
+export interface WeeklyPremiumBreakdown {
+  basePremium: number;
+  rainRiskAdjustment: number;
+  pollutionRiskAdjustment: number;
+  loyaltyDiscount: number;
+  finalPremium: number;
 }
 
 export interface DemoTransaction {
   id: string;
   kind: "PREMIUM" | "PAYOUT";
   amount: number;
-  status: "Credited" | "Debited" | "Under Review";
+  status: "Credited" | "Debited" | "Under Review" | "Rejected";
   label: string;
   eventType?: DemoEventType;
   createdAt: string;
@@ -22,8 +57,48 @@ export interface DemoTransaction {
 export interface LastPayoutEvent {
   eventType: DemoEventType;
   amount: number;
-  status: "Credited" | "Under Review";
+  status: "Credited" | "Under Review" | "Rejected";
   timestamp: string;
+}
+
+export interface RegisteredWorkerProfile {
+  name: string;
+  email: string;
+  city: string;
+  personaType: UserSession["persona_type"];
+  deliveryPartner: UserSession["deliveryPartner"];
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export type ClaimReviewStatus = "Pending Approval" | "Approved" | "Rejected";
+export type ClaimReviewVerdict = "Approve" | "Manual Review" | "Reject";
+
+export interface ClaimReview {
+  id: string;
+  dbClaimId?: number | null;
+  workerEmail: string;
+  workerName: string;
+  city: string;
+  triggerType: DemoEventType;
+  requestedAt: string;
+  payoutAmount: number;
+  expectedIncome: number;
+  loss: number;
+  coverageLimit: number;
+  rainMm: number;
+  activity: number;
+  riskScore: number;
+  riskLevel: RiskLevel;
+  activePolicy: boolean;
+  validTimeWindow: boolean;
+  thresholdMet: boolean;
+  fraudReason: string | null;
+  aiVerdict: ClaimReviewVerdict;
+  aiConfidence: number;
+  status: ClaimReviewStatus;
+  reviewer: string | null;
+  reviewReason: string | null;
 }
 
 export interface WorkerDemoState {
@@ -34,6 +109,9 @@ export interface WorkerDemoState {
   lastEvent: LastPayoutEvent | null;
   fraudStatus: "Clear" | "Suspicious" | "Under Review";
   fraudReason: string | null;
+  claimReviewStatus?: ClaimReviewStatus | null;
+  claimReviewId?: string | null;
+  claimReviewReason?: string | null;
 }
 
 export interface FraudFlaggedUser {
@@ -47,6 +125,8 @@ export interface FraudFlaggedUser {
 
 interface DemoStore {
   workers: Record<string, WorkerDemoState>;
+  workerProfiles: Record<string, RegisteredWorkerProfile>;
+  claims: ClaimReview[];
 }
 
 const DEMO_STORE_KEY = "smartshift_demo_store_v2";
@@ -60,26 +140,247 @@ const baseWorkerState = (): WorkerDemoState => ({
   lastEvent: null,
   fraudStatus: "Clear",
   fraudReason: null,
+  claimReviewStatus: null,
+  claimReviewId: null,
+  claimReviewReason: null,
 });
 
 const getStore = (): DemoStore => {
   const raw = localStorage.getItem(DEMO_STORE_KEY);
   if (!raw) {
-    return { workers: {} };
+    return { workers: {}, workerProfiles: {}, claims: [] };
   }
 
   try {
     const parsed = JSON.parse(raw) as Partial<DemoStore>;
     return {
       workers: parsed.workers || {},
+      workerProfiles: parsed.workerProfiles || {},
+      claims: parsed.claims || [],
     };
   } catch {
-    return { workers: {} };
+    return { workers: {}, workerProfiles: {}, claims: [] };
   }
 };
 
 const saveStore = (store: DemoStore) => {
   localStorage.setItem(DEMO_STORE_KEY, JSON.stringify(store));
+};
+
+const upsertWorkerProfile = (profile: RegisteredWorkerProfile) => {
+  const store = getStore();
+  store.workerProfiles[profile.email] = profile;
+  saveStore(store);
+};
+
+export const saveRegisteredWorkerProfile = (user: Pick<UserSession, "name" | "email" | "city" | "persona_type" | "deliveryPartner">) => {
+  const current = getStore().workerProfiles[user.email];
+  upsertWorkerProfile({
+    name: user.name,
+    email: user.email,
+    city: user.city,
+    personaType: user.persona_type,
+    deliveryPartner: user.deliveryPartner,
+    createdAt: current?.createdAt || new Date().toISOString(),
+    lastSeenAt: new Date().toISOString(),
+  });
+};
+
+export const getRegisteredWorkerProfiles = (): RegisteredWorkerProfile[] => {
+  const store = getStore();
+  return Object.values(store.workerProfiles).sort((a, b) => +new Date(b.lastSeenAt) - +new Date(a.lastSeenAt));
+};
+
+const upsertClaimReview = (claim: ClaimReview) => {
+  const store = getStore();
+  const claims = store.claims.filter((item) => item.id !== claim.id);
+  store.claims = [claim, ...claims];
+  saveStore(store);
+};
+
+export const getClaimReviews = (): ClaimReview[] => {
+  return getStore().claims.sort((a, b) => +new Date(b.requestedAt) - +new Date(a.requestedAt));
+};
+
+export const linkClaimReviewToDbId = (claimId: string, dbClaimId: number) => {
+  const store = getStore();
+  store.claims = store.claims.map((item) => (item.id === claimId ? { ...item, dbClaimId } : item));
+  saveStore(store);
+};
+
+export const submitClaimReview = (
+  user: Pick<UserSession, "email" | "name" | "city" | "persona_type" | "deliveryPartner">,
+  payload: {
+    triggerType: DemoEventType;
+    payoutAmount: number;
+    expectedIncome: number;
+    loss: number;
+    coverageLimit: number;
+    rainMm: number;
+    activity: number;
+    riskScore: number;
+    riskLevel: RiskLevel;
+    activePolicy: boolean;
+    validTimeWindow: boolean;
+    thresholdMet: boolean;
+    fraudReason: string | null;
+  },
+): { state: WorkerDemoState; claim: ClaimReview } => {
+  const current = getWorkerDemoState(user);
+  const requestedAt = new Date().toISOString();
+  const aiVerdict: ClaimReviewVerdict = payload.activePolicy && payload.validTimeWindow && payload.thresholdMet && !payload.fraudReason
+    ? "Approve"
+    : !payload.activePolicy || !payload.thresholdMet || Boolean(payload.fraudReason)
+      ? "Reject"
+      : "Manual Review";
+
+  const claim: ClaimReview = {
+    id: `CLM-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    dbClaimId: null,
+    workerEmail: user.email,
+    workerName: user.name,
+    city: user.city,
+    triggerType: payload.triggerType,
+    requestedAt,
+    payoutAmount: payload.payoutAmount,
+    expectedIncome: payload.expectedIncome,
+    loss: payload.loss,
+    coverageLimit: payload.coverageLimit,
+    rainMm: payload.rainMm,
+    activity: payload.activity,
+    riskScore: payload.riskScore,
+    riskLevel: payload.riskLevel,
+    activePolicy: payload.activePolicy,
+    validTimeWindow: payload.validTimeWindow,
+    thresholdMet: payload.thresholdMet,
+    fraudReason: payload.fraudReason,
+    aiVerdict,
+    aiConfidence: payload.riskScore,
+    status: "Pending Approval",
+    reviewer: null,
+    reviewReason: null,
+  };
+
+  const next: WorkerDemoState = {
+    ...current,
+    lastEvent: {
+      eventType: payload.triggerType,
+      amount: payload.payoutAmount,
+      status: "Under Review",
+      timestamp: requestedAt,
+    },
+    claimReviewStatus: claim.status,
+    claimReviewId: claim.id,
+    claimReviewReason: payload.fraudReason || (aiVerdict === "Approve" ? "AI approved and queued for admin review" : "Queued for admin review"),
+    transactions: [
+      {
+        id: makeId(),
+        kind: "PAYOUT" as const,
+        amount: payload.payoutAmount,
+        status: "Under Review" as const,
+        label: `${payload.triggerType} claim pending admin approval`,
+        eventType: payload.triggerType,
+        createdAt: requestedAt,
+      },
+      ...current.transactions,
+    ].slice(0, 20),
+  };
+
+  saveWorkerDemoState(user, next);
+  upsertClaimReview(claim);
+
+  return { state: next, claim };
+};
+
+const replaceWorkerTransaction = (workerState: WorkerDemoState, transactionId: string, nextStatus: DemoTransaction["status"], nextLabel: string) => ({
+  ...workerState,
+  transactions: workerState.transactions.map((transaction) => (
+    transaction.id === transactionId
+      ? { ...transaction, status: nextStatus, label: nextLabel }
+      : transaction
+  )),
+});
+
+export const approveClaimReview = (claimId: string, reviewer = "Admin"): { claim: ClaimReview | null; state: WorkerDemoState | null } => {
+  const store = getStore();
+  const claim = store.claims.find((item) => item.id === claimId);
+  if (!claim || claim.status !== "Pending Approval") return { claim: null, state: null };
+
+  const workerState = store.workers[claim.workerEmail] || baseWorkerState();
+  const creditedState = {
+    ...workerState,
+    walletBalance: workerState.walletBalance + claim.payoutAmount,
+    lastEvent: {
+      eventType: claim.triggerType,
+      amount: claim.payoutAmount,
+      status: "Credited" as const,
+      timestamp: new Date().toISOString(),
+    },
+    claimReviewStatus: "Approved" as const,
+    claimReviewReason: `Approved by ${reviewer}`,
+    claimReviewId: claim.id,
+  };
+
+  const reviewedClaim: ClaimReview = {
+    ...claim,
+    status: "Approved",
+    reviewer,
+    reviewReason: `Approved by ${reviewer}`,
+  };
+
+  store.workers[claim.workerEmail] = replaceWorkerTransaction(
+    creditedState,
+    workerState.transactions.find((transaction) => transaction.status === "Under Review" && transaction.eventType === claim.triggerType)?.id || "",
+    "Credited",
+    `₹${claim.payoutAmount} credited after admin approval`,
+  );
+  store.claims = store.claims.map((item) => (item.id === claimId ? reviewedClaim : item));
+  saveStore(store);
+
+  return { claim: reviewedClaim, state: store.workers[claim.workerEmail] };
+};
+
+export const rejectClaimReview = (claimId: string, reviewer = "Admin", reviewReason = "Rejected after review"): { claim: ClaimReview | null; state: WorkerDemoState | null } => {
+  const store = getStore();
+  const claim = store.claims.find((item) => item.id === claimId);
+  if (!claim || claim.status !== "Pending Approval") return { claim: null, state: null };
+
+  const workerState = store.workers[claim.workerEmail] || baseWorkerState();
+  const reviewedClaim: ClaimReview = {
+    ...claim,
+    status: "Rejected",
+    reviewer,
+    reviewReason,
+  };
+
+  store.workers[claim.workerEmail] = {
+    ...workerState,
+    lastEvent: {
+      eventType: claim.triggerType,
+      amount: claim.payoutAmount,
+      status: "Rejected",
+      timestamp: new Date().toISOString(),
+    },
+    claimReviewStatus: "Rejected",
+    claimReviewReason: reviewReason,
+    claimReviewId: claim.id,
+    transactions: [
+      {
+        id: makeId(),
+        kind: "PAYOUT" as const,
+        amount: 0,
+        status: "Rejected" as const,
+        label: `${claim.triggerType} claim rejected by ${reviewer}`,
+        eventType: claim.triggerType,
+        createdAt: new Date().toISOString(),
+      },
+      ...workerState.transactions,
+    ].slice(0, 20),
+  };
+  store.claims = store.claims.map((item) => (item.id === claimId ? reviewedClaim : item));
+  saveStore(store);
+
+  return { claim: reviewedClaim, state: store.workers[claim.workerEmail] };
 };
 
 const saveFlags = (flags: FraudFlaggedUser[]) => {
@@ -100,30 +401,140 @@ const getFlags = (): FraudFlaggedUser[] => {
 
 const makeId = () => `TX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-export const calculateRiskLevel = ({ rainfallMm, aqi }: RiskMetrics): RiskLevel => {
-  if (rainfallMm > 50) return "HIGH";
-  if (aqi > 300) return "MEDIUM";
-  return "LOW";
-};
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-export const premiumForRisk = (riskLevel: RiskLevel): number => {
-  if (riskLevel === "HIGH") return 60;
-  if (riskLevel === "MEDIUM") return 40;
-  return 20;
-};
+export const calculateRisk = ({ rainProbability, aqi, temperature }: Pick<RiskMetrics, "rainProbability" | "aqi" | "temperature">): RiskResult => {
+  const rainFactor = clamp(rainProbability / 100, 0, 1);
+  const aqiFactor = clamp(aqi / 500, 0, 1);
+  const tempFactor = clamp(temperature / 50, 0, 1);
 
-export const payoutForMetrics = ({ rainfallMm, aqi }: RiskMetrics): { eventType: DemoEventType; amount: number } | null => {
-  const riskLevel = calculateRiskLevel({ rainfallMm, aqi });
+  const rainContribution = 0.6 * rainFactor;
+  const aqiContribution = 0.25 * aqiFactor;
+  const tempContribution = 0.15 * tempFactor;
 
-  if (riskLevel === "HIGH") {
-    return { eventType: "Rain", amount: 500 };
+  const rawScore = rainContribution + aqiContribution + tempContribution;
+  const riskScore = Number(clamp(rawScore, 0, 1).toFixed(2));
+
+  let riskLevel: RiskLevel = "LOW";
+  if (riskScore > 0.7) {
+    riskLevel = "HIGH";
+  } else if (riskScore > 0.4) {
+    riskLevel = "MEDIUM";
   }
 
-  if (riskLevel === "MEDIUM") {
-    return { eventType: "AQI", amount: 300 };
+  return {
+    riskScore,
+    riskLevel,
+    breakdown: {
+      rainWeight: 0.6,
+      aqiWeight: 0.25,
+      tempWeight: 0.15,
+      rainFactor,
+      aqiFactor,
+      tempFactor,
+      rainContribution: Number(rainContribution.toFixed(3)),
+      aqiContribution: Number(aqiContribution.toFixed(3)),
+      tempContribution: Number(tempContribution.toFixed(3)),
+    },
+  };
+};
+
+export const calculateRiskLevel = (metrics: Pick<RiskMetrics, "rainProbability" | "aqi" | "temperature">): RiskLevel => {
+  return calculateRisk(metrics).riskLevel;
+};
+
+export const calculatePremium = (riskScore: number): number => {
+  const base = 20;
+  const variable = clamp(riskScore, 0, 1) * 50;
+  return Math.round(base + variable);
+};
+
+export const calculateWeeklyPremiumBreakdown = ({
+  riskScore,
+  rainProbability,
+  aqi,
+  claimFreeThisWeek = false,
+}: {
+  riskScore: number;
+  rainProbability: number;
+  aqi: number;
+  claimFreeThisWeek?: boolean;
+}): WeeklyPremiumBreakdown => {
+  const basePremium = 20;
+  const rainRiskAdjustment = riskScore > 0.6 ? 15 : riskScore > 0.3 ? 10 : 5;
+  const pollutionRiskAdjustment = aqi > 100 ? 5 : 2;
+  const loyaltyDiscount = claimFreeThisWeek ? 5 : 0;
+  const finalPremium = Math.max(basePremium + rainRiskAdjustment + pollutionRiskAdjustment - loyaltyDiscount, 0);
+
+  return {
+    basePremium,
+    rainRiskAdjustment: rainProbability > 50 ? rainRiskAdjustment : Math.max(rainRiskAdjustment - 3, 5),
+    pollutionRiskAdjustment,
+    loyaltyDiscount,
+    finalPremium: Math.round(finalPremium),
+  };
+};
+
+export const premiumForRisk = (riskScore: number): number => {
+  return calculatePremium(riskScore);
+};
+
+export const generateRiskForecast = (
+  currentData: Pick<RiskMetrics, "rainProbability" | "aqi" | "temperature">,
+): RiskForecastPoint[] => {
+  const forecast: RiskForecastPoint[] = [];
+
+  let rainProbability = currentData.rainProbability;
+  let aqi = currentData.aqi;
+  const temperature = currentData.temperature;
+
+  for (let i = 1; i <= 6; i += 1) {
+    rainProbability = clamp(rainProbability + (Math.random() * 10 - 5), 0, 100);
+    aqi = clamp(aqi + (Math.random() * 20 - 10), 0, 500);
+
+    const result = calculateRisk({ rainProbability, aqi, temperature });
+    forecast.push({
+      hour: `+${i}h`,
+      riskScore: result.riskScore,
+      riskLevel: result.riskLevel,
+    });
   }
 
-  return null;
+  return forecast;
+};
+
+export const checkForClaim = ({
+  rain,
+  activity,
+  expectedIncome = 600,
+  coverageLimit = 500,
+  lossPercentage = 0.5,
+}: {
+  rain: number;
+  activity: number;
+  expectedIncome?: number;
+  coverageLimit?: number;
+  lossPercentage?: number;
+}) => {
+  if (rain > 50 && activity < 30) {
+    const loss = expectedIncome * lossPercentage;
+    return {
+      triggered: true,
+      payout: Math.min(loss, coverageLimit),
+      reason: "Heavy rain disruption",
+    };
+  }
+
+  return { triggered: false as const };
+};
+
+export const payoutForMetrics = ({ rainfallMm, activity = 100 }: Pick<RiskMetrics, "rainfallMm" | "activity">): { eventType: DemoEventType; amount: number } | null => {
+  const claim = checkForClaim({ rain: rainfallMm, activity });
+  if (!claim.triggered) {
+    return null;
+  }
+
+  return { eventType: "Rain", amount: claim.payout };
 };
 
 export const getWorkerDemoState = (user: Pick<UserSession, "email">): WorkerDemoState => {
@@ -198,24 +609,28 @@ export const simulateInsuranceEvent = (
   status: "Credited" | "Under Review";
   riskLevel: RiskLevel;
   premium: number;
+  claimTriggered: boolean;
+  claimReason: string;
   fraudReason: string | null;
 } => {
   const current = getWorkerDemoState(user);
-  const riskLevel = calculateRiskLevel(metrics);
-  const premium = premiumForRisk(riskLevel);
-  const payout = payoutForMetrics(metrics);
+  const riskResult = calculateRisk(metrics);
+  const riskLevel = riskResult.riskLevel;
+  const premium = premiumForRisk(riskResult.riskScore);
+  const claim = checkForClaim({ rain: metrics.rainfallMm, activity: metrics.activity ?? 100 });
+  const payout = claim.triggered ? { eventType: "Rain" as const, amount: claim.payout } : null;
   const fraudResult = detectFraud(fraudScenario, metrics);
 
   const payoutAmount = payout?.amount || 0;
-  const status = fraudResult.detected ? "Under Review" : "Credited";
+  const status = fraudResult.detected ? "Under Review" : payoutAmount > 0 ? "Under Review" : "Credited";
 
   const transaction: DemoTransaction = {
     id: makeId(),
-    kind: "PAYOUT",
+    kind: "PAYOUT" as const,
     amount: payoutAmount,
     status,
-    label: payoutAmount > 0 ? `${eventType} disruption auto-claim` : `${eventType} simulation (no payout)`,
-    eventType,
+    label: claim.triggered ? `Rain disruption auto-claim (${claim.reason})` : `${eventType} simulation (no payout)`,
+    eventType: claim.triggered ? "Rain" : eventType,
     createdAt: new Date().toISOString(),
   };
 
@@ -223,7 +638,7 @@ export const simulateInsuranceEvent = (
     ...current,
     riskLevel,
     weeklyPremium: premium,
-    walletBalance: fraudResult.detected ? current.walletBalance : current.walletBalance + payoutAmount,
+    walletBalance: current.walletBalance,
     lastEvent: {
       eventType,
       amount: payoutAmount,
@@ -232,6 +647,8 @@ export const simulateInsuranceEvent = (
     },
     fraudStatus: fraudResult.detected ? "Suspicious" : "Clear",
     fraudReason: fraudResult.reason,
+    claimReviewStatus: payoutAmount > 0 ? "Pending Approval" : null,
+    claimReviewReason: payoutAmount > 0 ? "Pending admin approval" : null,
     transactions: [transaction, ...current.transactions].slice(0, 20),
   };
 
@@ -255,6 +672,8 @@ export const simulateInsuranceEvent = (
     status,
     riskLevel,
     premium,
+    claimTriggered: claim.triggered,
+    claimReason: claim.triggered ? claim.reason : "No trigger",
     fraudReason: fraudResult.reason,
   };
 };

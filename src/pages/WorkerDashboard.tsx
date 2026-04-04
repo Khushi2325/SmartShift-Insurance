@@ -1,23 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Clock, MapPin, TrendingUp, CheckCircle2, Activity, User, LogOut, Receipt, Wallet, Settings, CircleUserRound, AlertTriangle, Sparkles } from "lucide-react";
+import { CloudRain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { clearSession, getSession, setSession, UserSession } from "@/lib/session";
 import PayoutStatusCard from "@/components/PayoutStatusCard";
+import {
+  fetchWorkerPortalState,
+  syncClaimToDb,
+  syncFraudAlertToDb,
+  syncInsurancePolicyToDb,
+  syncRiskDataToDb,
+  syncWorkerToDb,
+} from "@/lib/dbApi";
 import { tx, useAppLanguage } from "@/lib/preferences";
 import {
-  calculateRiskLevel,
+  calculateRisk,
+  checkForClaim,
   DemoEventType,
+  generateRiskForecast,
   getWorkerDemoState,
-  premiumForRisk,
+  calculateWeeklyPremiumBreakdown,
+  linkClaimReviewToDbId,
   recordPremiumPayment,
   saveWorkerDemoState,
-  simulateInsuranceEvent,
+  saveRegisteredWorkerProfile,
+  submitClaimReview,
 } from "@/lib/insuranceDemo";
 
 type TrendPoint = { time: string; score: number; hour: number };
@@ -65,11 +78,11 @@ const planBestForHindi: Record<string, string> = {
   "Night deliveries": "रात की डिलीवरी",
 };
 
-const cityConditions: Record<string, { rain: string; rainMm: number; aqi: number; temp: string; risk: number }> = {
-  Mumbai: { rain: "Heavy", rainMm: 56, aqi: 142, temp: "36°C", risk: 0.72 },
-  Delhi: { rain: "None", rainMm: 0, aqi: 188, temp: "39°C", risk: 0.76 },
-  Bangalore: { rain: "Light", rainMm: 3, aqi: 74, temp: "29°C", risk: 0.31 },
-  Chennai: { rain: "Moderate", rainMm: 19, aqi: 102, temp: "35°C", risk: 0.58 },
+const cityConditions: Record<string, { rain: string; rainMm: number; rainProbability: number; aqi: number; temp: string; risk: number }> = {
+  Mumbai: { rain: "Heavy", rainMm: 56, rainProbability: 86, aqi: 142, temp: "36°C", risk: 0.72 },
+  Delhi: { rain: "None", rainMm: 0, rainProbability: 12, aqi: 188, temp: "39°C", risk: 0.76 },
+  Bangalore: { rain: "Light", rainMm: 3, rainProbability: 38, aqi: 74, temp: "29°C", risk: 0.31 },
+  Chennai: { rain: "Moderate", rainMm: 19, rainProbability: 64, aqi: 102, temp: "35°C", risk: 0.58 },
 };
 
 const cityCoordinates: Record<string, { latitude: number; longitude: number }> = {
@@ -79,7 +92,7 @@ const cityCoordinates: Record<string, { latitude: number; longitude: number }> =
   Chennai: { latitude: 13.0827, longitude: 80.2707 },
 };
 
-const defaultCondition = { rain: "--", rainMm: 0, aqi: 0, temp: "--", risk: 0.1 };
+const defaultCondition = { rain: "--", rainMm: 0, rainProbability: 0, aqi: 0, temp: "--", risk: 0.1 };
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
@@ -87,6 +100,24 @@ const fadeUp = {
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const isWithinCoverageWindow = (windowLabel: string, date = new Date()) => {
+  const match = windowLabel.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return true;
+
+  const toMinutes = (hourText: string, minuteText: string, meridiem: string) => {
+    let hour = Number(hourText) % 12;
+    if (meridiem.toUpperCase() === "PM") hour += 12;
+    return hour * 60 + Number(minuteText);
+  };
+
+  const start = toMinutes(match[1], match[2], match[3]);
+  const end = toMinutes(match[4], match[5], match[6]);
+  const now = date.getHours() * 60 + date.getMinutes();
+
+  if (start <= end) return now >= start && now <= end;
+  return now >= start || now <= end;
+};
 
 const getRainLabel = (rainMm: number) => {
   if (rainMm >= 7) return "Heavy";
@@ -96,6 +127,15 @@ const getRainLabel = (rainMm: number) => {
 };
 
 const parseMoney = (value: string) => Number(value.replace(/[^0-9.]/g, ""));
+const inferPlanIdFromPolicy = (policy: { plan_id?: string | null; coverage_amount?: number } | null) => {
+  if (!policy) return null;
+  if (policy.plan_id && policy.plan_id !== "unknown") return policy.plan_id;
+  if (policy.coverage_amount === 500) return "day-shield";
+  if (policy.coverage_amount === 300) return "rush-hour-cover";
+  if (policy.coverage_amount === 350) return "night-safety";
+  return null;
+};
+
 const validateUPI = (upiId: string) => {
   const upiRegex = /^[a-zA-Z0-9.\-_]{3,}@[a-zA-Z]{3,}$/;
 
@@ -116,10 +156,10 @@ const toTitleCase = (value: string) => value
   .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
   .join(" ");
 
-const calculatePayout = (riskLevel: "HIGH" | "MEDIUM" | "LOW") => {
-  if (riskLevel === "HIGH") return 500;
-  if (riskLevel === "MEDIUM") return 300;
-  return 0;
+const statusBadgeClass = (status: "ACTIVE" | "SAFE" | "MEDIUM") => {
+  if (status === "ACTIVE") return "bg-risk-high-bg text-risk-high border border-risk-high/30";
+  if (status === "MEDIUM") return "bg-risk-medium-bg text-risk-medium border border-risk-medium/30";
+  return "bg-risk-low-bg text-risk-low border border-risk-low/30";
 };
 
 const loadRazorpayScript = async (): Promise<boolean> => {
@@ -149,20 +189,6 @@ const resolveCoordinates = async (city: string) => {
   if (!first) return null;
 
   return { latitude: Number(first.latitude), longitude: Number(first.longitude) };
-};
-
-const computeRiskScore = (rain: number, aqi: number, temp: number, precipProbability: number, mode: UserSession["preferences"]["aiRecommendationMode"]) => {
-  const rainScore = clamp(Math.max(rain / 10, precipProbability / 100), 0, 1);
-  const aqiScore = clamp((aqi - 50) / 150, 0, 1);
-  const tempScore = clamp((temp - 30) / 15, 0, 1);
-
-  const weights = mode === "safety-first"
-    ? { rain: 0.5, aqi: 0.35, temp: 0.15 }
-    : mode === "earnings-first"
-      ? { rain: 0.35, aqi: 0.35, temp: 0.3 }
-      : { rain: 0.45, aqi: 0.35, temp: 0.2 };
-
-  return clamp(weights.rain * rainScore + weights.aqi * aqiScore + weights.temp * tempScore, 0.08, 0.98);
 };
 
 const buildRecommendations = (trend: TrendPoint[], mode: UserSession["preferences"]["aiRecommendationMode"]): ShiftRecommendation[] => {
@@ -207,13 +233,17 @@ const WorkerDashboard = () => {
   const language = useAppLanguage();
   const navigate = useNavigate();
   const [user, setUser] = useState<UserSession | null>(() => getSession());
-  const [liveCondition, setLiveCondition] = useState<{ rain: string; rainMm: number; aqi: number; temp: string; risk: number } | null>(null);
+  const [liveCondition, setLiveCondition] = useState<{ rain: string; rainMm: number; rainProbability: number; aqi: number; temp: string; risk: number } | null>(null);
   const [isWeatherLoading, setIsWeatherLoading] = useState(false);
   const [trendData, setTrendData] = useState<TrendPoint[]>(fallbackTrend);
   const [paymentPlanId, setPaymentPlanId] = useState<string | null>(null);
   const [upiId, setUpiId] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [demoTriggerMessage, setDemoTriggerMessage] = useState("");
+  const [demoPayoutDetails, setDemoPayoutDetails] = useState<{ expectedIncome: number; loss: number; payout: number; coverageLimit: number } | null>(null);
+  const [demoVerification, setDemoVerification] = useState<{ activePolicy: boolean; validTimeWindow: boolean; thresholdMet: boolean; approved: boolean } | null>(null);
+  const plansSectionRef = useRef<HTMLDivElement | null>(null);
   const [demoState, setDemoState] = useState(() => (user ? getWorkerDemoState(user) : getWorkerDemoState({ email: "" })));
   const [payoutCelebration, setPayoutCelebration] = useState<{ amount: number; walletBalance: number } | null>(null);
   const [lastAutoClaimKey, setLastAutoClaimKey] = useState("");
@@ -222,8 +252,51 @@ const WorkerDashboard = () => {
   const userCity = user?.city?.trim() || "";
   const displayCity = userCity || tx(language, "Update city in profile", "प्रोफाइल में शहर अपडेट करें");
   const policyActive = Boolean(user?.policyActive);
+  const personaType = user?.persona_type || "rain";
+  const personaProfile = personaType === "rain"
+    ? "Rain-Heavy City Rider 🌧️"
+    : personaType === "pollution"
+      ? "Air-Quality Sensitive Rider 🌫️"
+      : "Balanced Conditions Rider ☀️";
+  const environmentLabel = personaType === "rain"
+    ? `Rain-heavy city (${userCity || "Mumbai"})`
+    : personaType === "pollution"
+      ? `Pollution-prone city (${userCity || "Delhi"})`
+      : `Normal conditions city (${userCity || "Bangalore"})`;
+  const deliveryPartner = user?.deliveryPartner || "Zomato";
 
   const currentCondition = useMemo(() => liveCondition || cityConditions[userCity] || defaultCondition, [liveCondition, userCity]);
+  const currentTemp = useMemo(() => Number(currentCondition.temp.replace("°C", "") || 0), [currentCondition.temp]);
+  const rainImpactAssessment = useMemo(
+    () => calculateRisk({
+      rainProbability: currentCondition.rainProbability,
+      aqi: currentCondition.aqi,
+      temperature: currentTemp,
+    }),
+    [currentCondition.aqi, currentCondition.rainProbability, currentTemp],
+  );
+  const rainImpactPercent = Math.round(rainImpactAssessment.riskScore * 100);
+  const rainImpactLevel = rainImpactAssessment.riskLevel;
+  const nextSixHoursForecast = useMemo(
+    () => generateRiskForecast({
+      rainProbability: currentCondition.rainProbability,
+      aqi: currentCondition.aqi,
+      temperature: currentTemp,
+    }),
+    [currentCondition.aqi, currentCondition.rainProbability, currentTemp],
+  );
+  const nextThreeHoursRiskTrend = nextSixHoursForecast.length >= 3
+    ? nextSixHoursForecast[2].riskScore > nextSixHoursForecast[0].riskScore
+      ? "Increasing ⬆️"
+      : nextSixHoursForecast[2].riskScore < nextSixHoursForecast[0].riskScore
+        ? "Decreasing ⬇️"
+        : "Stable ➖"
+    : "Stable ➖";
+  const expectedImpactMessage = rainImpactAssessment.riskLevel === "HIGH"
+    ? "Heavy rain expected — delivery activity may drop"
+    : rainImpactAssessment.riskLevel === "MEDIUM"
+      ? "Moderate weather disruption — slight delivery slowdown likely"
+      : "Low disruption expected — delivery flow should remain stable";
 
   const activePlan = useMemo(() => {
     if (!user?.purchasedPlans?.length) return null;
@@ -241,15 +314,29 @@ const WorkerDashboard = () => {
   );
 
   const riskLevel = demoState.riskLevel;
-  const riskPercent = riskLevel === "HIGH" ? 90 : riskLevel === "MEDIUM" ? 60 : 25;
   const recommendedPlanId = riskLevel === "HIGH" ? "day-shield" : riskLevel === "MEDIUM" ? "rush-hour-cover" : "night-safety";
   const selectedFraudReason = demoState.fraudStatus === "Clear" ? "None" : (demoState.fraudReason || "Under review");
-  const realtimeRiskLevel = calculateRiskLevel({ rainfallMm: currentCondition.rainMm, aqi: currentCondition.aqi });
-  const rainDisruption = currentCondition.rainMm > 50;
-  const aqiDisruption = currentCondition.aqi > 300;
-  const activeDisruptionType: DemoEventType | null = rainDisruption ? "Rain" : (aqiDisruption ? "AQI" : null);
-  const activeDisruptionLabel = activeDisruptionType === "Rain" ? "Heavy Rain" : activeDisruptionType === "AQI" ? "Severe AQI" : null;
-  const estimatedRealtimePayout = activeDisruptionType ? calculatePayout(realtimeRiskLevel) : 0;
+  const realtimeRiskLevel = rainImpactAssessment.riskLevel;
+  const estimatedActivity = clamp(Math.round(100 - currentCondition.rainProbability - currentCondition.rainMm * 0.8), 10, 100);
+  const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 500;
+  const autoClaimStatus = checkForClaim({ rain: currentCondition.rainMm, activity: estimatedActivity, expectedIncome: 600, coverageLimit });
+  const activeDisruptionType: DemoEventType | null = autoClaimStatus.triggered ? "Rain" : null;
+  const activeDisruptionLabel = activeDisruptionType === "Rain" ? "Heavy Rain" : null;
+  const estimatedRealtimePayout = autoClaimStatus.triggered ? autoClaimStatus.payout : 0;
+  const rainTriggerState: "ACTIVE" | "SAFE" = currentCondition.rainMm > 50 ? "ACTIVE" : "SAFE";
+  const aqiTriggerState: "ACTIVE" | "SAFE" = currentCondition.aqi > 300 ? "ACTIVE" : "SAFE";
+  const zoneTriggerState: "ACTIVE" | "SAFE" = estimatedActivity < 30 ? "ACTIVE" : "SAFE";
+  const platformTriggerState: "MEDIUM" | "SAFE" = isWeatherLoading ? "MEDIUM" : "SAFE";
+  const trafficTriggerState: "ACTIVE" | "MEDIUM" | "SAFE" = rainImpactAssessment.riskScore > 0.75
+    ? "ACTIVE"
+    : rainImpactAssessment.riskScore > 0.5
+      ? "MEDIUM"
+      : "SAFE";
+  const triggeredBy = [
+    rainTriggerState === "ACTIVE" ? "Rain" : null,
+    zoneTriggerState === "ACTIVE" ? "Low Activity" : null,
+    trafficTriggerState !== "SAFE" ? "High Traffic" : null,
+  ].filter(Boolean).join(" + ") || "No active disruption chain";
 
   const walletImpactLines = useMemo(() => {
     const entries = demoState.transactions.slice(0, 3).map((tx) => {
@@ -293,6 +380,21 @@ const WorkerDashboard = () => {
     return months;
   }, [demoState.transactions]);
 
+  const claimFreeThisWeek = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return !demoState.transactions.some((tx) => {
+      if (tx.kind !== "PAYOUT" || tx.status !== "Credited") return false;
+      return new Date(tx.createdAt).getTime() >= weekAgo;
+    });
+  }, [demoState.transactions]);
+
+  const weeklyPremiumBreakdown = useMemo(() => calculateWeeklyPremiumBreakdown({
+    riskScore: rainImpactAssessment.riskScore,
+    rainProbability: currentCondition.rainProbability,
+    aqi: currentCondition.aqi,
+    claimFreeThisWeek,
+  }), [claimFreeThisWeek, currentCondition.aqi, currentCondition.rainProbability, rainImpactAssessment.riskScore]);
+
   const totalPayouts = useMemo(
     () => demoState.transactions
       .filter((tx) => tx.kind === "PAYOUT" && tx.status === "Credited")
@@ -303,6 +405,81 @@ const WorkerDashboard = () => {
   const handleLogout = () => {
     clearSession();
     navigate("/login");
+  };
+
+  const handleSimulateHeavyRain = () => {
+    if (!user) return;
+
+    const rainMm = 65;
+    const simulatedActivity = 20;
+    const threshold = 50;
+    const expectedIncome = 600;
+    const lossPercentage = 0.5;
+    const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 500;
+    const hasActivePlan = Boolean(policyActive && activePlan);
+    const validTimeWindow = activePlan ? isWithinCoverageWindow(activePlan.window) : false;
+    const thresholdMet = rainMm > threshold && simulatedActivity < 30;
+    const approved = hasActivePlan && validTimeWindow && thresholdMet;
+
+    setDemoVerification({
+      activePolicy: hasActivePlan,
+      validTimeWindow,
+      thresholdMet,
+      approved,
+    });
+
+    if (!approved) {
+      setDemoTriggerMessage("No claim request — conditions are below payout threshold");
+      setDemoPayoutDetails(null);
+      return;
+    }
+
+    const loss = expectedIncome * lossPercentage;
+    const payout = Math.min(loss, coverageLimit);
+
+    const review = submitClaimReview(user, {
+      triggerType: "Rain",
+      payoutAmount: payout,
+      expectedIncome,
+      loss,
+      coverageLimit,
+      rainMm,
+      activity: simulatedActivity,
+      riskScore: rainImpactAssessment.riskScore,
+      riskLevel: rainImpactAssessment.riskLevel,
+      activePolicy: hasActivePlan,
+      validTimeWindow,
+      thresholdMet,
+      fraudReason: null,
+    });
+
+    const next = review.state;
+
+    setDemoState(next);
+    saveWorkerDemoState(user, next);
+    setPayoutCelebration(null);
+    setDemoPayoutDetails({ expectedIncome, loss, payout, coverageLimit });
+    setDemoTriggerMessage(`⚡ Rain detected (${rainMm}mm)  •  ⚡ Activity dropped  •  ⏳ ₹${payout} sent for admin approval`);
+
+    if (user) {
+      void syncClaimToDb({
+        worker_email: user.email,
+        trigger_type: "rain_disruption_demo",
+        payout_amount: payout,
+        status: "Under Review",
+        auto_generated: true,
+      })
+        .then((response) => {
+          if (response?.claim?.id) {
+            linkClaimReviewToDbId(review.claim.id, response.claim.id);
+          }
+        })
+        .catch(() => {
+          // Demo mode continues even if DB sync fails.
+        });
+    }
+
+    toast.info(`Claim submitted for approval: ₹${payout}`);
   };
 
   const startPlanPayment = (planId: string) => {
@@ -317,7 +494,7 @@ const WorkerDashboard = () => {
     const plan = planCatalog.find((item) => item.id === planId);
     if (!plan) return;
 
-    const expected = parseMoney(plan.premium);
+    const expected = demoState.weeklyPremium;
 
     const next = {
       ...user,
@@ -332,6 +509,20 @@ const WorkerDashboard = () => {
 
     const updatedDemo = recordPremiumPayment(next, expected, plan.name);
     setDemoState(updatedDemo);
+
+    try {
+      await syncInsurancePolicyToDb({
+        worker_email: next.email,
+        plan_id: planId,
+        weekly_premium: expected,
+        risk_level: riskLevel,
+        coverage_amount: parseMoney(plan.payout),
+        status: "active",
+      });
+    } catch {
+      // UI state remains source-of-truth for demo flow if DB sync temporarily fails.
+    }
+
     toast.success(tx(language, "Insurance activated. You can now simulate disruption events.", "इंश्योरेंस एक्टिव हो गया। अब आप डिसरप्शन इवेंट सिमुलेट कर सकते हैं।"));
   };
 
@@ -443,7 +634,7 @@ const WorkerDashboard = () => {
       return;
     }
 
-    void initiateRazorpay(planId, parseMoney(plan.premium));
+    void initiateRazorpay(planId, demoState.weeklyPremium);
   };
 
   useEffect(() => {
@@ -452,15 +643,101 @@ const WorkerDashboard = () => {
   }, [user?.email]);
 
   useEffect(() => {
+    if (!user?.email) return;
+
+    let cancelled = false;
+
+    void fetchWorkerPortalState(user.email)
+      .then((portal) => {
+        if (cancelled) return;
+
+        const activePolicy = portal.activePolicy;
+        const activePlanId = inferPlanIdFromPolicy(activePolicy);
+        const policyIsActive = Boolean(activePolicy && String(activePolicy.status).toLowerCase() === "active");
+
+        setUser((previous) => {
+          if (!previous) return previous;
+
+          const nextPurchasedPlans = activePlanId
+            ? [activePlanId, ...(previous.purchasedPlans || []).filter((item) => item !== activePlanId)]
+            : previous.purchasedPlans;
+
+          const next = {
+            ...previous,
+            name: portal.worker?.name || previous.name,
+            city: portal.worker?.city || previous.city,
+            persona_type: portal.worker?.persona_type || previous.persona_type,
+            deliveryPartner: portal.worker?.delivery_partner || previous.deliveryPartner,
+            policyActive: policyIsActive,
+            purchasedPlans: nextPurchasedPlans,
+          };
+
+          const changed =
+            next.name !== previous.name ||
+            next.city !== previous.city ||
+            next.persona_type !== previous.persona_type ||
+            next.deliveryPartner !== previous.deliveryPartner ||
+            next.policyActive !== previous.policyActive ||
+            JSON.stringify(next.purchasedPlans) !== JSON.stringify(previous.purchasedPlans);
+
+          if (!changed) return previous;
+          setSession(next);
+          return next;
+        });
+      })
+      .catch(() => {
+        // Keep dashboard usable with existing local session state if fetch fails.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.email]);
+
+  useEffect(() => {
+    if (!user?.email) return;
+
+    saveRegisteredWorkerProfile({
+      name: user.name,
+      email: user.email,
+      city: user.city,
+      persona_type: user.persona_type,
+      deliveryPartner: user.deliveryPartner,
+    });
+
+    const syncFromStore = () => {
+      setDemoState(getWorkerDemoState(user));
+    };
+
+    syncFromStore();
+    const intervalId = window.setInterval(syncFromStore, 2000);
+    window.addEventListener("storage", syncFromStore);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("storage", syncFromStore);
+    };
+  }, [user?.city, user?.deliveryPartner, user?.email, user?.name, user?.persona_type]);
+
+  useEffect(() => {
     if (!user) return;
-    const derivedRisk = calculateRiskLevel({ rainfallMm: currentCondition.rainMm, aqi: currentCondition.aqi });
-    const premium = premiumForRisk(derivedRisk);
-    if (derivedRisk !== demoState.riskLevel || premium !== demoState.weeklyPremium) {
-      const next = { ...demoState, riskLevel: derivedRisk, weeklyPremium: premium };
+    const derived = calculateRisk({
+      rainProbability: currentCondition.rainProbability,
+      aqi: currentCondition.aqi,
+      temperature: currentTemp,
+    });
+    const premium = calculateWeeklyPremiumBreakdown({
+      riskScore: derived.riskScore,
+      rainProbability: currentCondition.rainProbability,
+      aqi: currentCondition.aqi,
+      claimFreeThisWeek,
+    }).finalPremium;
+    if (derived.riskLevel !== demoState.riskLevel || premium !== demoState.weeklyPremium) {
+      const next = { ...demoState, riskLevel: derived.riskLevel, weeklyPremium: premium };
       setDemoState(next);
       saveWorkerDemoState(user, next);
     }
-  }, [currentCondition.rainMm, currentCondition.aqi, demoState, user]);
+  }, [claimFreeThisWeek, currentCondition.aqi, currentCondition.rainProbability, currentTemp, demoState, user]);
 
   useEffect(() => {
     if (!payoutCelebration) return;
@@ -471,31 +748,79 @@ const WorkerDashboard = () => {
   useEffect(() => {
     if (!user || !policyActive) return;
 
-    let eventType: DemoEventType | null = null;
-    const metrics = { rainfallMm: currentCondition.rainMm, aqi: currentCondition.aqi };
-
-    if (metrics.rainfallMm > 50) {
-      eventType = "Rain";
-    } else if (metrics.aqi > 300) {
-      eventType = "AQI";
-    }
-
-    if (!eventType) return;
+    const validTimeWindow = activePlan ? isWithinCoverageWindow(activePlan.window) : false;
+    const thresholdMet = currentCondition.rainMm > 50 && estimatedActivity < 30;
+    const claim = checkForClaim({ rain: currentCondition.rainMm, activity: estimatedActivity, expectedIncome: 600, coverageLimit });
+    const approved = Boolean(activePlan && validTimeWindow && thresholdMet && claim.triggered);
+    if (!approved) return;
 
     const claimWindow = new Date().toISOString().slice(0, 13);
-    const claimKey = `${eventType}-${claimWindow}`;
+    const claimKey = `Rain-${claimWindow}`;
     if (claimKey === lastAutoClaimKey) return;
 
-    const result = simulateInsuranceEvent(user, eventType, metrics, "none");
-    setDemoState(result.state);
+    const review = submitClaimReview(user, {
+      triggerType: "Rain",
+      payoutAmount: claim.payout,
+      expectedIncome: 600,
+      loss: 600 * 0.5,
+      coverageLimit,
+      rainMm: currentCondition.rainMm,
+      activity: estimatedActivity,
+      riskScore: rainImpactAssessment.riskScore,
+      riskLevel: rainImpactAssessment.riskLevel,
+      activePolicy: true,
+      validTimeWindow,
+      thresholdMet,
+      fraudReason: null,
+    });
+
+    setDemoState(review.state);
     setLastAutoClaimKey(claimKey);
 
-    if (result.status === "Credited" && result.payoutAmount > 0) {
-      const dynamicPayout = calculatePayout(result.riskLevel);
-      setPayoutCelebration({ amount: dynamicPayout, walletBalance: result.state.walletBalance });
-      toast.success(`₹${dynamicPayout} credited successfully`);
+    void syncClaimToDb({
+      worker_email: user.email,
+      trigger_type: "rain_disruption",
+      payout_amount: claim.payout,
+      status: "Under Review",
+      auto_generated: true,
+    })
+      .then((response) => {
+        if (response?.claim?.id) {
+          linkClaimReviewToDbId(review.claim.id, response.claim.id);
+        }
+      })
+      .catch(() => {
+        // Keep the simulation responsive even if DB write fails.
+      });
+
+    if (review.claim.fraudReason) {
+      void syncFraudAlertToDb({
+        worker_email: user.email,
+        reason: review.claim.fraudReason,
+        flag_level: "MEDIUM",
+        resolved: false,
+      }).catch(() => {
+        // Fraud alert can be retried later.
+      });
     }
-  }, [currentCondition.aqi, currentCondition.rainMm, lastAutoClaimKey, policyActive, user]);
+
+    setDemoTriggerMessage(`⚡ Live claim created for admin review • ₹${claim.payout} pending approval`);
+    toast.info(`Claim sent for admin approval: ₹${claim.payout}`);
+  }, [currentCondition.aqi, currentCondition.rainMm, currentCondition.rainProbability, currentTemp, estimatedActivity, lastAutoClaimKey, policyActive, rainImpactAssessment.riskLevel, rainImpactAssessment.riskScore, user]);
+
+  useEffect(() => {
+    if (!user?.email) return;
+
+    void syncWorkerToDb({
+      name: user.name,
+      email: user.email,
+      city: user.city,
+      persona_type: user.persona_type,
+      delivery_partner: user.deliveryPartner,
+    }).catch(() => {
+      // Non-blocking worker sync.
+    });
+  }, [user?.city, user?.deliveryPartner, user?.email, user?.name, user?.persona_type]);
 
   useEffect(() => {
     let cancelled = false;
@@ -507,14 +832,13 @@ const WorkerDashboard = () => {
         return;
       }
 
-      const mode = user?.preferences?.aiRecommendationMode || "balanced";
       setIsWeatherLoading(true);
 
       try {
         const coordinates = await resolveCoordinates(userCity);
         if (!coordinates) throw new Error("Coordinates not found");
 
-        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=temperature_2m,precipitation,rain&hourly=temperature_2m,precipitation_probability,rain&timezone=auto&forecast_days=1`;
+        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=temperature_2m,precipitation,rain,precipitation_probability&hourly=temperature_2m,precipitation_probability,rain&timezone=auto&forecast_days=1`;
         const airUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=us_aqi&hourly=us_aqi&timezone=auto&forecast_days=1`;
 
         const [weatherRes, airRes] = await Promise.all([fetch(weatherUrl), fetch(airUrl)]);
@@ -526,11 +850,12 @@ const WorkerDashboard = () => {
         const temp = Number(weatherData?.current?.temperature_2m ?? 0);
         const rain = Number(weatherData?.current?.rain ?? weatherData?.current?.precipitation ?? 0);
         const currentAqi = Number(airData?.current?.us_aqi ?? cityConditions[userCity]?.aqi ?? 100);
-        const risk = computeRiskScore(rain, currentAqi, temp, Number(weatherData?.current?.precipitation ?? 0), mode);
+        const rainProbability = Number(weatherData?.current?.precipitation_probability ?? weatherData?.hourly?.precipitation_probability?.[0] ?? 0);
+        const riskResult = calculateRisk({ rainProbability, aqi: currentAqi, temperature: temp });
+        const risk = riskResult.riskScore;
 
         const hourlyTimes: string[] = weatherData?.hourly?.time || [];
         const hourlyTemps: number[] = weatherData?.hourly?.temperature_2m || [];
-        const hourlyRain: number[] = weatherData?.hourly?.rain || [];
         const hourlyProb: number[] = weatherData?.hourly?.precipitation_probability || [];
         const hourlyAqi: number[] = airData?.hourly?.us_aqi || [];
 
@@ -540,20 +865,30 @@ const WorkerDashboard = () => {
           const hour = date.getHours();
           if (hour < 6 || hour > 20 || hour % 2 !== 0) continue;
 
-          const pointRisk = computeRiskScore(
-            Number(hourlyRain[i] ?? 0),
-            Number(hourlyAqi[i] ?? currentAqi),
-            Number(hourlyTemps[i] ?? temp),
-            Number(hourlyProb[i] ?? 0),
-            mode,
-          );
+          const pointRisk = calculateRisk({
+            rainProbability: Number(hourlyProb[i] ?? 0),
+            aqi: Number(hourlyAqi[i] ?? currentAqi),
+            temperature: Number(hourlyTemps[i] ?? temp),
+          }).riskScore;
           nextTrend.push({ time: toLabel(hour), score: Number(pointRisk.toFixed(2)), hour });
         }
 
         if (!cancelled) {
+          void syncRiskDataToDb({
+            city: userCity,
+            rain_probability: Math.round(rainProbability),
+            aqi: Math.round(currentAqi),
+            temperature: Math.round(temp),
+            risk_score: Number(risk.toFixed(2)),
+            risk_level: riskResult.riskLevel,
+          }).catch(() => {
+            // Non-blocking risk logging.
+          });
+
           setLiveCondition({
             rain: getRainLabel(rain),
             rainMm: Number(rain.toFixed(1)),
+            rainProbability: Math.round(rainProbability),
             aqi: Math.round(currentAqi),
             temp: `${Math.round(temp)}°C`,
             risk: Number(risk.toFixed(2)),
@@ -586,7 +921,7 @@ const WorkerDashboard = () => {
   }, [userCity, user?.preferences?.aiRecommendationMode]);
 
   return (
-    <div className="min-h-screen bg-transparent">
+    <div className="min-h-screen bg-[#0B1220]">
       <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="container mx-auto flex items-center justify-between h-14 px-4">
           <div className="flex items-center gap-6">
@@ -649,8 +984,10 @@ const WorkerDashboard = () => {
             <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-2">
               <MapPin className="w-3.5 h-3.5" /> {displayCity} | {formattedDate}
             </p>
-            <p className="text-sm text-muted-foreground mt-2">{tx(language, "🚴 Delivery Partner (Zomato)", "🚴 डिलीवरी पार्टनर (Zomato)")}</p>
+            <p className="text-sm text-muted-foreground mt-2">Delivery Partner: {deliveryPartner}</p>
             <p className="text-sm text-muted-foreground mt-1">{tx(language, "💰 Avg Earnings: ₹600/day", "💰 औसत कमाई: ₹600/दिन")}</p>
+            <p className="text-sm text-foreground mt-2 font-medium">Your Profile: {personaProfile}</p>
+            <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5"><CloudRain className="w-3.5 h-3.5" /> Your Work Environment: {environmentLabel}</p>
           </div>
           <div className="flex items-center gap-3">
             {policyActive ? (
@@ -667,305 +1004,234 @@ const WorkerDashboard = () => {
           </div>
         </motion.div>
 
-        <motion.div variants={fadeUp} custom={0.5} initial="hidden" animate="visible" className="grid lg:grid-cols-3 gap-6">
-          <div className="glass-card rounded-xl p-7 shadow-md lg:col-span-2 space-y-5">
-            <div className="rounded-xl bg-blue-50 p-5 shadow-md">
-              <p className="text-base font-bold text-blue-900">{tx(language, "🛡️ Your Protection", "🛡️ आपकी सुरक्षा")}</p>
-              <div className="mt-3 space-y-1.5 text-sm text-blue-900">
-                <p>✔ {tx(language, "Plan", "प्लान")}: {activePlan ? tx(language, activePlan.name, planNameHindi[activePlan.name] || activePlan.name) : tx(language, "None", "कोई नहीं")}</p>
-                <p>⏰ {tx(language, "Coverage", "कवरेज")}: {activePlan?.window || tx(language, "Not active", "सक्रिय नहीं")}</p>
-                <p>📡 {tx(language, "Status", "स्थिति")}: {policyActive ? tx(language, "Monitoring Active", "मॉनिटरिंग सक्रिय") : tx(language, "Inactive", "निष्क्रिय")}</p>
-              </div>
-              <p className="text-sm text-blue-700 mt-3">{tx(language, "💡 Auto-detecting disruptions and processing payouts", "💡 सिस्टम रुकावटें पहचानकर ऑटो पेआउट प्रोसेस कर रहा है")}</p>
-            </div>
-
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <h3 className="font-display font-semibold text-foreground">{tx(language, "Auto Claim Monitoring", "ऑटो क्लेम मॉनिटरिंग")}</h3>
-              <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">{tx(language, "Realtime Risk Engine", "रियलटाइम रिस्क इंजन")}</span>
-            </div>
-            {payoutCelebration && (
-              <motion.div initial={{ opacity: 0, scale: 0.97, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="mb-3 rounded-xl border-2 border-accent bg-risk-low-bg/70 p-4 shadow-lg shadow-accent/20">
-                <p className="text-lg font-display font-bold text-accent flex items-center gap-2"><Sparkles className="w-5 h-5" /> {tx(language, "Payout Triggered!", "पेआउट ट्रिगर हुआ!")}</p>
-                <p className="text-xl font-bold text-foreground mt-1">₹{payoutCelebration.amount} {tx(language, "credited to your wallet", "आपके वॉलेट में जमा हुए")}</p>
-                <p className="text-sm text-muted-foreground mt-1">{tx(language, "Wallet updated instantly to", "वॉलेट तुरंत अपडेट होकर")} ₹{payoutCelebration.walletBalance}</p>
-              </motion.div>
-            )}
-
-            {activeDisruptionType ? (
-              <div className="rounded-xl bg-gradient-to-r from-red-50 to-orange-100 p-5 shadow-md">
-                <p className="text-base font-bold text-red-800">🚨 {tx(language, "High Risk Alert", "उच्च जोखिम अलर्ट")}: {activeDisruptionLabel}</p>
-                <div className="grid md:grid-cols-2 gap-2 mt-3 text-sm text-red-900">
-                  <p>🌧 Rainfall: <span className="font-semibold">{currentCondition.rainMm} mm</span></p>
-                  <p>⚠ Risk Level: <span className="text-lg font-extrabold text-red-700">{realtimeRiskLevel}</span></p>
-                  <p>✅ {tx(language, "Your policy is", "आपकी पॉलिसी")} {policyActive ? tx(language, "active", "सक्रिय") : tx(language, "inactive", "निष्क्रिय")}</p>
-                  <p className="font-bold text-green-700">💸 {tx(language, "Estimated Payout", "अनुमानित पेआउट")}: ₹{estimatedRealtimePayout}</p>
+        <div className="space-y-8">
+          <section className="space-y-4 pt-2">
+            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">🔥 Your Coverage</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="rounded-2xl p-6 border border-emerald-400/35 bg-[rgba(16,32,24,0.72)] shadow-[0_0_20px_rgba(34,197,94,0.14)]">
+                <p className="text-xs font-medium text-muted-foreground">Core Impact</p>
+                <h3 className="text-3xl md:text-[2rem] font-bold text-emerald-300 mt-1">💰 Wallet: ₹{demoState.walletBalance}</h3>
+                <div className="mt-3 space-y-1.5">
+                  {walletImpactLines.slice(0, 3).map((line) => (
+                    <p key={line.text} className={`text-sm ${line.positive ? "text-emerald-400" : "text-red-400"}`}>{line.text}</p>
+                  ))}
                 </div>
-                <p className="text-sm text-red-700 mt-3">⏳ {tx(language, "Auto payout will be processed if condition persists", "स्थिति बनी रहने पर ऑटो पेआउट प्रोसेस होगा")}</p>
               </div>
-            ) : (
-              <div className="rounded-xl bg-gradient-to-r from-emerald-50 to-blue-50 p-5 shadow-md">
-                <p className="text-base font-bold text-emerald-800">✅ {tx(language, "No High-Risk Weather Alert", "कोई उच्च-जोखिम मौसम अलर्ट नहीं")}</p>
-                <div className="grid md:grid-cols-2 gap-2 mt-3 text-sm text-emerald-900">
-                  <p>🌧 Rainfall: <span className="font-semibold">{currentCondition.rainMm} mm</span></p>
-                  <p>🌫 AQI: <span className="font-semibold">{currentCondition.aqi}</span></p>
-                  <p>🟢 {tx(language, "Risk Level", "जोखिम स्तर")}: <span className="font-semibold">{realtimeRiskLevel}</span></p>
-                  <p>📡 {tx(language, "Monitoring", "मॉनिटरिंग")}: <span className="font-semibold">{tx(language, "Active", "सक्रिय")}</span></p>
+
+              <div className="rounded-2xl p-6 border border-primary/25 bg-[#111827] shadow-[0_0_20px_rgba(59,130,246,0.1)]">
+                <h3 className="font-display font-semibold text-foreground mb-3">Active Policy</h3>
+                {policyActive && activePlan ? (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-muted-foreground">Plan</span><span className="text-foreground font-medium">{tx(language, activePlan.name, planNameHindi[activePlan.name] || activePlan.name)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Coverage</span><span className="text-foreground font-medium">{activePlan.window}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Weekly Premium</span><span className="text-foreground font-semibold">₹{demoState.weeklyPremium}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="text-accent font-medium">Monitoring ✅</span></div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border/70 p-4 bg-muted/20">
+                    <p className="text-sm text-muted-foreground">No active policy. Choose a plan to activate coverage.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl p-6 border border-primary/25 bg-[#111827] shadow-[0_0_20px_rgba(59,130,246,0.1)]">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-display font-semibold text-foreground">Smart Claim Engine (AI + Verification) ⚡</h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 inline-flex items-center gap-1.5">
+                    <span className="inline-flex h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+                    Live
+                  </span>
                 </div>
-                <p className="text-sm text-emerald-700 mt-3">{tx(language, "No payout triggered currently. System continues live monitoring.", "अभी कोई पेआउट ट्रिगर नहीं हुआ। सिस्टम लाइव मॉनिटरिंग जारी रखे हुए है।")}</p>
-              </div>
-            )}
-
-            <p className="text-sm text-muted-foreground">{tx(language, "Helping delivery partners avoid income loss during disruptions.", "डिलीवरी पार्टनर्स को रुकावटों में आय नुकसान से बचाने में मदद।")}</p>
-            <div className="rounded-lg bg-muted/40 border border-border/60 p-3 mb-3">
-              <p className="text-xs text-muted-foreground mb-2">{tx(language, "Journey: Login → Dashboard → Risk → Activate Insurance → Auto Detection → Auto Payout → History", "यात्रा: लॉगिन → डैशबोर्ड → जोखिम → इंश्योरेंस एक्टिवेट → ऑटो डिटेक्शन → ऑटो पेआउट → हिस्ट्री")}</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                <span className="rounded-md px-2 py-1 bg-card border border-border/60 text-foreground">Risk: {riskLevel}</span>
-                <span className="rounded-md px-2 py-1 bg-card border border-border/60 text-foreground">Weekly Premium: ₹{demoState.weeklyPremium}</span>
-                <span className="rounded-md px-2 py-1 bg-card border border-border/60 text-foreground">Fraud Mode: {selectedFraudReason}</span>
+                <div className="mt-3 space-y-1.5 text-sm">
+                  <p><span className="text-muted-foreground">Last Trigger:</span> <span className="font-medium text-foreground">{demoState.lastEvent?.eventType || "None"}</span></p>
+                  <p className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Review Status:</span>
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${demoState.claimReviewStatus === "Pending Approval" ? "border-amber-300/40 bg-amber-500/10 text-amber-300" : demoState.claimReviewStatus === "Approved" ? "border-accent/30 bg-accent/10 text-accent" : demoState.claimReviewStatus === "Rejected" ? "border-risk-high/30 bg-risk-high-bg text-risk-high" : "border-border/60 bg-muted/30 text-muted-foreground"}`}>
+                      {demoState.claimReviewStatus || "None"}
+                    </span>
+                  </p>
+                  <p><span className="text-muted-foreground">Pending Amount:</span> <span className="font-medium text-foreground">₹{demoState.lastEvent?.amount || 0}</span></p>
+                  <p><span className="text-muted-foreground">Submission Route:</span> <span className="font-medium text-foreground">AI check → admin review → payout</span></p>
+                  <p><span className="text-muted-foreground">Triggered by:</span> <span className="font-medium text-foreground">{triggeredBy}</span></p>
+                </div>
+                <Button className="w-full mt-3" onClick={handleSimulateHeavyRain}>Simulate Heavy Rain 🌧</Button>
+                {demoVerification && (
+                  <div className="mt-3 rounded-md border border-amber-300/25 bg-amber-500/5 p-3 text-xs space-y-1.5">
+                    <p className="font-medium text-foreground">AI pre-check</p>
+                    <p className={demoVerification.activePolicy ? "text-accent" : "text-risk-medium"}>{demoVerification.activePolicy ? "✔ Active policy" : "✖ Active policy"}</p>
+                    <p className={demoVerification.validTimeWindow ? "text-accent" : "text-risk-medium"}>{demoVerification.validTimeWindow ? "✔ Valid time window" : "✖ Valid time window"}</p>
+                    <p className={demoVerification.thresholdMet ? "text-accent" : "text-risk-medium"}>{demoVerification.thresholdMet ? "✔ Weather threshold met" : "✖ Weather threshold not strong enough"}</p>
+                    <p className={demoVerification.approved ? "text-amber-300 font-medium" : "text-risk-medium"}>{demoVerification.approved ? "Pending approval from admin" : "No claim submitted"}</p>
+                  </div>
+                )}
               </div>
             </div>
-            <div className="mb-3 rounded-xl bg-gradient-to-r from-green-50 to-emerald-100 p-5 shadow-md shadow-emerald-200/60">
-              <p className="text-xs font-medium text-muted-foreground">Core Impact</p>
-              <h2 className="text-2xl md:text-3xl font-bold text-green-700 mt-1">💰 Wallet Balance: ₹{demoState.walletBalance}</h2>
-              <p className="text-sm font-semibold text-foreground mt-3">📈 Recent Activity:</p>
-              <div className="mt-2 space-y-1.5">
-                {walletImpactLines.map((line) => (
-                  <p key={line.text} className={`text-sm ${line.positive ? "text-green-700" : "text-red-600"}`}>{line.text}</p>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-xl bg-blue-50 p-4 shadow-md">
-              <p className="text-sm font-bold text-blue-900">🔍 Security Check</p>
-              <p className="text-sm text-blue-900 mt-2">✔ Location Verified</p>
-              <p className="text-sm text-blue-900 mt-1">✔ Device Verified</p>
-              <p className="text-sm text-blue-900 mt-1">✔ {demoState.fraudStatus === "Clear" ? "No suspicious activity detected" : "Suspicious activity under review"}</p>
-            </div>
-            {!policyActive && <p className="text-xs text-risk-medium mt-2">Activate a plan first to enable automatic disruption payouts.</p>}
-            {demoState.fraudStatus !== "Clear" && (
-              <div className="mt-3 rounded-lg border border-risk-medium/30 bg-risk-medium-bg/40 p-3 text-sm">
-                <p className="flex items-center gap-2 font-semibold text-risk-medium"><AlertTriangle className="w-4 h-4" /> Suspicious Activity: Under Review</p>
-                <p className="text-xs text-muted-foreground mt-1">{demoState.fraudReason || "Claim flagged for manual verification."}</p>
-              </div>
-            )}
-          </div>
+          </section>
 
-          <PayoutStatusCard event={demoState.lastEvent} />
-        </motion.div>
-
-        <motion.div variants={fadeUp} custom={1} initial="hidden" animate="visible" className="glass-card rounded-xl p-7 shadow-md">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-display font-semibold text-foreground">Available Plans</h3>
-            <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">No waiting period</span>
-          </div>
-          <div className="grid md:grid-cols-3 gap-3">
-            {planCatalog.map((plan) => {
-              const selected = activePlan?.id === plan.id;
-              const inPayment = paymentPlanId === plan.id;
-              const recommended = plan.id === recommendedPlanId;
-              return (
-                <div key={plan.id} className={`rounded-xl p-5 shadow-md ${selected ? "bg-accent/5" : "bg-card/60"}`}>
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <h4 className="font-display text-base font-semibold text-foreground">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
-                    <div className="flex items-center gap-1">
-                      {recommended && <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">Recommended Plan ⭐</span>}
-                      {selected && <span className="risk-badge-low">Active</span>}
+          <section className="space-y-4 pt-2">
+            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">⚡ Live Risk Monitoring</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <div className="glass-card rounded-xl p-6 bg-[#0F172A]/80 border border-border/60">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-display font-semibold text-foreground">Today's Risk</h3>
+                    <span className={rainImpactLevel === "HIGH" ? "risk-badge-high" : rainImpactLevel === "MEDIUM" ? "risk-badge-medium" : "risk-badge-low"}>{rainImpactLevel}</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="relative w-20 h-20">
+                      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="42" fill="none" stroke="hsl(var(--border))" strokeWidth="8" />
+                        <circle cx="50" cy="50" r="42" fill="none" stroke={rainImpactLevel === "HIGH" ? "hsl(var(--risk-high))" : rainImpactLevel === "MEDIUM" ? "hsl(var(--risk-medium))" : "hsl(var(--risk-low))"} strokeWidth="8" strokeDasharray={`${(rainImpactPercent / 100) * 264} 264`} strokeLinecap="round" />
+                      </svg>
+                      <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-foreground">{rainImpactPercent}%</span>
+                    </div>
+                    <div className="space-y-1 text-sm flex-1">
+                      <p className="text-foreground font-medium">Score: {rainImpactAssessment.riskScore.toFixed(2)} ({rainImpactLevel})</p>
+                      <p className="text-muted-foreground">Rain {currentCondition.rainMm}mm • AQI {currentCondition.aqi}</p>
+                      <p className="text-xs text-muted-foreground">{isWeatherLoading ? "Refreshing live weather..." : "Live explainable risk model active."}</p>
                     </div>
                   </div>
-                  <div className="space-y-1.5 text-sm mb-3">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="text-foreground">{plan.window}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Premium</span><span className="text-foreground">{plan.premium}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Payout</span><span className="text-foreground">{plan.payout}</span></div>
-                    <div className="text-xs text-muted-foreground mt-1">{tx(language, "Triggers", "ट्रिगर्स")}: {tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</div>
-                    <div className="text-xs text-primary font-medium">💡 {tx(language, "Best for", "सबसे बेहतर")}: {tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</div>
-                    {plan.id === "night-safety" && <div className="text-xs text-amber-700 font-semibold">⭐ {tx(language, "Recommended for current conditions", "मौजूदा परिस्थितियों के लिए सुझाया गया")}</div>}
-                  </div>
+                </div>
 
-                  {selected ? (
-                    <Button className="w-full gap-2" variant="secondary">
-                      <Wallet className="w-4 h-4" /> Selected
-                    </Button>
-                  ) : inPayment ? (
-                    <div className="space-y-2">
-                      <Input
-                        type="text"
-                        value={upiId}
-                        onChange={(e) => {
-                          setUpiId(e.target.value);
-                          setPaymentStatus("");
-                        }}
-                        placeholder={tx(language, "Enter UPI ID (example@upi)", "UPI ID दर्ज करें (example@upi)")}
-                      />
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button className="w-full" disabled={isProcessing} onClick={() => handlePurchase(plan.id)}>
-                          {isProcessing ? tx(language, "Processing...", "प्रोसेसिंग...") : tx(language, "Pay & Activate Plan", "पे करें और प्लान एक्टिवेट करें")}
-                        </Button>
-                        <Button className="w-full" variant="outline" disabled={isProcessing} onClick={() => setPaymentPlanId(null)}>{tx(language, "Cancel", "रद्द करें")}</Button>
+                <div className="glass-card rounded-xl p-6 bg-[#0F172A]/80 border border-border/60">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-display font-semibold text-foreground">📊 Next 6 Hours Prediction</h3>
+                    <div className="flex gap-1.5">
+                      {["Low", "Medium", "High"].map((l) => (
+                        <span key={l} className={`text-[10px] px-2 py-0.5 rounded-full ${l === "Low" ? "risk-badge-low" : l === "Medium" ? "risk-badge-medium" : "risk-badge-high"}`}>{l}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={190}>
+                    <LineChart data={nextSixHoursForecast.map((point) => ({ time: point.hour, score: point.riskScore }))}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 25%)" />
+                      <XAxis dataKey="time" tick={{ fontSize: 11, fill: "hsl(220, 10%, 70%)" }} />
+                      <YAxis tick={{ fontSize: 11, fill: "hsl(220, 10%, 70%)" }} domain={[0, 1]} tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} />
+                      <Tooltip formatter={(value: number) => `${Math.round(Number(value) * 100)}% risk`} />
+                      <Line type="monotone" dataKey="score" stroke="hsl(213, 94%, 68%)" strokeWidth={3} dot={{ r: 2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-xl border border-primary/20 bg-[#0F172A]/70 p-5 shadow-sm">
+                  <h4 className="font-display text-base font-semibold text-foreground">Smart Risk Triggers (Live Monitoring)</h4>
+                  <div className="mt-3 grid grid-cols-1 text-xs">
+                    <div className="flex items-center justify-between py-2 border-b border-border/50"><span className="text-muted-foreground">🌧 Rain Monitoring</span><span className={`px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(rainTriggerState)}`}>{rainTriggerState}</span></div>
+                    <div className="flex items-center justify-between py-2 border-b border-border/50"><span className="text-muted-foreground">⚠️ AQI Monitoring</span><span className={`px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(aqiTriggerState)}`}>{aqiTriggerState}</span></div>
+                    <div className="flex items-center justify-between py-2 border-b border-border/50"><span className="text-muted-foreground">📉 Delivery Activity</span><span className={`px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(zoneTriggerState)}`}>{zoneTriggerState}</span></div>
+                    <div className="flex items-center justify-between py-2 border-b border-border/50"><span className="text-muted-foreground">🧠 Platform Health</span><span className={`px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(platformTriggerState)}`}>{platformTriggerState}</span></div>
+                    <div className="flex items-center justify-between py-2"><span className="text-muted-foreground">🚦 Traffic Conditions</span><span className={`px-2 py-0.5 rounded-full font-medium ${statusBadgeClass(trafficTriggerState)}`}>{trafficTriggerState}</span></div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-3">Payout is triggered only when multiple conditions are satisfied.</p>
+                </div>
+                <PayoutStatusCard event={demoState.lastEvent} />
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4 pt-2">
+            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">💡 Smart Recommendations</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div ref={plansSectionRef} className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-display font-semibold text-foreground">Available Plans</h3>
+                  <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">No waiting period</span>
+                </div>
+                <div className="grid md:grid-cols-1 xl:grid-cols-2 gap-4">
+                  {planCatalog.map((plan) => {
+                    const selected = activePlan?.id === plan.id;
+                    const inPayment = paymentPlanId === plan.id;
+                    const recommended = plan.id === recommendedPlanId;
+                    return (
+                      <div key={plan.id} className={`rounded-xl p-4 ${selected ? "bg-accent/10 border border-accent/30" : "bg-card/50 border border-border/50"}`}>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <h4 className="font-display text-sm font-semibold text-foreground">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
+                          {recommended && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-300/40 font-semibold">Recommended ⭐</span>}
+                        </div>
+                        <div className="space-y-1 text-xs mb-3">
+                          <div className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="text-foreground">{plan.window}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Premium</span><span className="text-foreground">₹{weeklyPremiumBreakdown.finalPremium}/week</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Payout</span><span className="text-foreground">{plan.payout}</span></div>
+                        </div>
+                        {selected ? (
+                          <Button className="w-full gap-2" variant="secondary"><Wallet className="w-4 h-4" /> Selected</Button>
+                        ) : inPayment ? (
+                          <div className="space-y-2">
+                            <Input
+                              type="text"
+                              value={upiId}
+                              onChange={(e) => {
+                                setUpiId(e.target.value);
+                                setPaymentStatus("");
+                              }}
+                              placeholder={tx(language, "Enter UPI ID (example@upi)", "UPI ID दर्ज करें (example@upi)")}
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              <Button className="w-full" disabled={isProcessing} onClick={() => handlePurchase(plan.id)}>{isProcessing ? tx(language, "Processing...", "प्रोसेसिंग...") : tx(language, "Pay & Activate Plan", "पे करें और प्लान एक्टिवेट करें")}</Button>
+                              <Button className="w-full" variant="outline" disabled={isProcessing} onClick={() => setPaymentPlanId(null)}>{tx(language, "Cancel", "रद्द करें")}</Button>
+                            </div>
+                            {paymentStatus && <p className={`mt-1 text-xs ${paymentStatus.includes("Successful") ? "text-green-600" : "text-muted-foreground"}`}>{paymentStatus}</p>}
+                          </div>
+                        ) : (
+                          <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}><Wallet className="w-4 h-4" /> {tx(language, "Choose Plan", "प्लान चुनें")}</Button>
+                        )}
                       </div>
-                      {paymentStatus && (
-                        <p className={`mt-2 text-xs ${paymentStatus.includes("Successful") ? "text-green-600" : "text-muted-foreground"}`}>{paymentStatus}</p>
-                      )}
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="glass-card rounded-xl p-6 border border-border/60 bg-[#0F172A]/75">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-display font-semibold text-foreground">AI Earnings Optimization</h3>
+                  <TrendingUp className="w-4 h-4 text-primary" />
+                </div>
+                <div className="space-y-2 mt-4">
+                  {shiftRecommendations.map((item) => (
+                    <div key={item.time} className="p-3 rounded-lg bg-muted/20 border border-border/40">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-sm font-medium text-foreground">{item.time}</span>
+                        </div>
+                        <span className={`risk-badge-${item.badge}`}>{item.risk}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground pl-6">
+                        <span>{tx(language, item.reason, item.reason === "Avoid long shifts unless necessary" ? "ज़रूरत न हो तो लंबी शिफ्ट से बचें" : item.reason === "Work with short breaks and alerts on" ? "छोटे ब्रेक लेकर और अलर्ट ऑन रखकर काम करें" : "सुरक्षित और स्थिर काम के लिए बेहतरीन स्लॉट")}</span>
+                        <span>{item.earnings}</span>
+                      </div>
                     </div>
-                  ) : (
-                    <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}>
-                      <Wallet className="w-4 h-4" /> {tx(language, "Choose Plan", "प्लान चुनें")}
-                    </Button>
-                  )}
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        </motion.div>
+              </div>
+            </div>
+          </section>
 
-        <div className="grid lg:grid-cols-3 gap-5">
-          <motion.div variants={fadeUp} custom={2} initial="hidden" animate="visible" className="glass-card-elevated rounded-xl p-7 shadow-md lg:col-span-1">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display font-semibold text-foreground">Current Risk</h3>
-              <span className={riskLevel === "HIGH" ? "risk-badge-high" : riskLevel === "MEDIUM" ? "risk-badge-medium" : "risk-badge-low"}>
-                {riskLevel}
-              </span>
-            </div>
-            <div className="flex items-center gap-4 mb-4">
-              <div className="relative w-24 h-24">
-                <svg className="w-24 h-24 -rotate-90" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="42" fill="none" stroke="hsl(var(--border))" strokeWidth="8" />
-                  <circle cx="50" cy="50" r="42" fill="none" stroke={riskLevel === "HIGH" ? "hsl(var(--risk-high))" : riskLevel === "MEDIUM" ? "hsl(var(--risk-medium))" : "hsl(var(--risk-low))"} strokeWidth="8" strokeDasharray={`${(riskPercent / 100) * 264} 264`} strokeLinecap="round" />
-                </svg>
-                <span className="absolute inset-0 flex items-center justify-center font-display text-2xl font-bold text-foreground">
-                  {riskPercent}%
-                </span>
+          <section className="space-y-4 pt-2">
+            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground/95 tracking-tight">🔒 System Trust & Safety</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 opacity-70">
+              <div className="rounded-xl p-4 bg-[#0F172A]/55 border border-border/40 text-sm">
+                <p className="font-semibold text-foreground">Security Check</p>
+                <p className="text-xs text-muted-foreground mt-2">✔ Location verified</p>
+                <p className="text-xs text-muted-foreground">✔ Device verified</p>
+                <p className="text-xs text-muted-foreground">✔ {demoState.fraudStatus === "Clear" ? "No suspicious activity" : "Activity under review"}</p>
               </div>
-              <div className="space-y-2 flex-1">
-                <p className="text-sm font-semibold text-foreground">🌤️ Current Conditions</p>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">🌧 Rain</span>
-                  <span className="font-medium text-foreground">{currentCondition.rainMm} mm</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">🌫 AQI</span>
-                  <span className="font-medium text-foreground">{currentCondition.aqi} ({currentCondition.aqi > 300 ? "Severe" : currentCondition.aqi > 150 ? "Unhealthy" : "Moderate"})</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">🌡 Temp</span>
-                  <span className="font-medium text-foreground">{currentCondition.temp}</span>
-                </div>
-                <p className="text-sm font-semibold text-foreground mt-1">🟢 Overall Risk: {riskLevel}</p>
+              <div className="rounded-xl p-4 bg-[#0F172A]/55 border border-border/40 text-sm">
+                <p className="font-semibold text-foreground">Why Trust This System</p>
+                <p className="text-xs text-muted-foreground mt-2">• Real-time weather APIs</p>
+                <p className="text-xs text-muted-foreground">• No manual claims</p>
+                <p className="text-xs text-muted-foreground">• Transparent payout logic</p>
+              </div>
+              <div className="rounded-xl p-4 bg-[#0F172A]/55 border border-border/40 text-sm">
+                <p className="font-semibold text-foreground">Emergency Support (Future Scope)</p>
+                <p className="text-xs text-muted-foreground mt-2">• Inactivity detection for emergency cases</p>
+                <p className="text-xs text-muted-foreground">• Trusted contact alert workflow</p>
+                <p className="text-xs text-muted-foreground">• Partner integration on roadmap</p>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground bg-muted/50 p-2.5 rounded-lg">
-              {isWeatherLoading ? "Refreshing live weather and AI score..." : "Live conditions are continuously monitored for automatic protection."}
-            </p>
-            <p className="text-xs mt-2 text-foreground/80">
-              {riskLevel === "HIGH" ? "High risk → higher chance of payout." : "Low risk → safer working conditions."}
-            </p>
-          </motion.div>
-
-          <motion.div variants={fadeUp} custom={3} initial="hidden" animate="visible" className="glass-card rounded-xl p-7 shadow-md lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display font-semibold text-foreground">📊 Risk Trend (Today)</h3>
-              <div className="flex gap-2">
-                {["Low", "Medium", "High"].map((l) => (
-                  <span key={l} className={`text-xs px-2 py-0.5 rounded-full ${l === "Low" ? "risk-badge-low" : l === "Medium" ? "risk-badge-medium" : "risk-badge-high"}`}>{l}</span>
-                ))}
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={210}>
-              <AreaChart data={trendData}>
-                <defs>
-                  <linearGradient id="riskGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(220, 70%, 45%)" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="hsl(220, 70%, 45%)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 15%, 88%)" />
-                <XAxis dataKey="time" tick={{ fontSize: 11, fill: "hsl(220, 10%, 50%)" }} />
-                <YAxis tick={{ fontSize: 11, fill: "hsl(220, 10%, 50%)" }} domain={[0, 1]} tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} />
-                <Tooltip formatter={(value: number) => `${Math.round(Number(value) * 100)}% risk`} />
-                <Area type="monotone" dataKey="score" stroke="hsl(220, 70%, 45%)" fill="url(#riskGrad)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
-            <p className="text-sm text-muted-foreground mt-3">6 AM → Low · 9 AM → Medium · 12 PM → High · 3 PM → High · 6 PM → Medium</p>
-            <p className="text-sm text-primary font-medium mt-1">💡 Best working window: Morning & Evening</p>
-          </motion.div>
-        </div>
-
-        <div className="grid lg:grid-cols-2 gap-4">
-          <motion.div variants={fadeUp} custom={4} initial="hidden" animate="visible" className="glass-card p-6">
-            <h3 className="font-display font-semibold mb-4 text-foreground">Active Policy</h3>
-            {policyActive && activePlan ? (
-              <div className="space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Plan</span>
-                  <span className="font-medium text-foreground">{tx(language, activePlan.name, planNameHindi[activePlan.name] || activePlan.name)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Coverage Window</span>
-                  <span className="font-medium text-foreground">{activePlan.window}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Premium Paid</span>
-                  <span className="font-medium text-foreground">{activePlan.premium}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Dynamic Weekly Premium</span>
-                  <span className="font-semibold text-foreground">₹{demoState.weeklyPremium}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Max Payout</span>
-                  <span className="font-medium text-foreground">{activePlan.payout}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Triggers</span>
-                  <span className="font-medium text-foreground">{tx(language, activePlan.triggers, planTriggerHindi[activePlan.triggers] || activePlan.triggers)}</span>
-                </div>
-                <div className="pt-2 border-t border-border/50">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Status</span>
-                    <span className="flex items-center gap-1 text-accent font-medium">
-                      <Activity className="w-3.5 h-3.5" /> Monitoring
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm mt-2">
-                    <span className="text-muted-foreground">Fraud Check</span>
-                    <span className={`font-medium ${demoState.fraudStatus === "Clear" ? "text-accent" : "text-risk-medium"}`}>
-                      {demoState.fraudStatus === "Clear" ? "Clear" : "Under Review"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-border/80 p-4 bg-muted/30">
-                <p className="text-sm text-muted-foreground">No active policy yet. Select a plan and pay exact premium to activate it.</p>
-              </div>
-            )}
-          </motion.div>
-
-          <motion.div variants={fadeUp} custom={5} initial="hidden" animate="visible" className="glass-card p-6">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="font-display font-semibold text-foreground">AI Shift Recommendations</h3>
-              <TrendingUp className="w-4 h-4 text-primary" />
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">Recommendations combine live weather, AQI, heat, and your selected AI mode.</p>
-            <div className="space-y-2">
-              {shiftRecommendations.map((item) => (
-                <div key={item.time} className="p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-3">
-                      <Clock className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">{item.time}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`risk-badge-${item.badge}`}>{item.risk}</span>
-                      <span className="text-xs text-muted-foreground">Earnings: {item.earnings}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground pl-7">
-                      <span>{tx(language, item.reason, item.reason === "Avoid long shifts unless necessary" ? "ज़रूरत न हो तो लंबी शिफ्ट से बचें" : item.reason === "Work with short breaks and alerts on" ? "छोटे ब्रेक लेकर और अलर्ट ऑन रखकर काम करें" : "सुरक्षित और स्थिर काम के लिए बेहतरीन स्लॉट")}</span>
-                      <span>{tx(language, item.confidence, item.confidence === "High confidence" ? "उच्च भरोसा" : "मध्यम भरोसा")}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
+          </section>
         </div>
 
         {policyActive && (
