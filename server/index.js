@@ -2,6 +2,7 @@ import crypto from "crypto";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import fs from "fs";
 import path from "path";
 import pg from "pg";
 import Razorpay from "razorpay";
@@ -410,15 +411,29 @@ app.get("/api/payment/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.use(express.static(path.resolve("dist")));
+const distPath = path.resolve("dist");
+const distIndexPath = path.resolve(distPath, "index.html");
+const hasBuiltFrontend = fs.existsSync(distIndexPath);
 
-app.get("/{*path}", (req, res) => {
-  if (req.path.startsWith("/api/")) {
-    return res.status(404).json({ error: "Not found" });
-  }
+if (hasBuiltFrontend) {
+  app.use(express.static(distPath));
 
-  return res.sendFile(path.resolve("dist", "index.html"));
-});
+  app.get("/{*path}", (req, res) => {
+    if (req.path.startsWith("/api/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    return res.sendFile(distIndexPath);
+  });
+} else {
+  app.get("/{*path}", (req, res) => {
+    if (req.path.startsWith("/api/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    return res.status(503).send("Frontend build not found. Use http://localhost:8080 for dev, or run npm run build and then npm run start.");
+  });
+}
 
 const pingRenderUrl = () => {
   const targetUrl = "https://smartshift-insurance.onrender.com/";
