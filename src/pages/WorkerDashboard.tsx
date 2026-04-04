@@ -11,9 +11,13 @@ import { toast } from "sonner";
 import { clearSession, getSession, setSession, UserSession } from "@/lib/session";
 import PayoutStatusCard from "@/components/PayoutStatusCard";
 import {
+  ClaimLifecycle,
+  ClaimLifecycleStatus,
+  createClaimLifecycle,
+  fetchLatestClaimByUserId,
+  fetchUserProfile,
   fetchWorkerPortalState,
-  syncClaimToDb,
-  syncFraudAlertToDb,
+  approveClaimLifecycle,
   syncInsurancePolicyToDb,
   syncRiskDataToDb,
   syncWorkerToDb,
@@ -21,16 +25,12 @@ import {
 import { tx, useAppLanguage } from "@/lib/preferences";
 import {
   calculateRisk,
-  checkForClaim,
-  DemoEventType,
   generateRiskForecast,
   getWorkerDemoState,
   calculateWeeklyPremiumBreakdown,
-  linkClaimReviewToDbId,
   recordPremiumPayment,
   saveWorkerDemoState,
   saveRegisteredWorkerProfile,
-  submitClaimReview,
 } from "@/lib/insuranceDemo";
 
 type TrendPoint = { time: string; score: number; hour: number };
@@ -101,23 +101,7 @@ const fadeUp = {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-const isWithinCoverageWindow = (windowLabel: string, date = new Date()) => {
-  const match = windowLabel.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!match) return true;
-
-  const toMinutes = (hourText: string, minuteText: string, meridiem: string) => {
-    let hour = Number(hourText) % 12;
-    if (meridiem.toUpperCase() === "PM") hour += 12;
-    return hour * 60 + Number(minuteText);
-  };
-
-  const start = toMinutes(match[1], match[2], match[3]);
-  const end = toMinutes(match[4], match[5], match[6]);
-  const now = date.getHours() * 60 + date.getMinutes();
-
-  if (start <= end) return now >= start && now <= end;
-  return now >= start || now <= end;
-};
+const makeAutoClaimId = () => `AUTO-CLAIM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
 const getRainLabel = (rainMm: number) => {
   if (rainMm >= 7) return "Heavy";
@@ -134,6 +118,23 @@ const inferPlanIdFromPolicy = (policy: { plan_id?: string | null; coverage_amoun
   if (policy.coverage_amount === 300) return "rush-hour-cover";
   if (policy.coverage_amount === 350) return "night-safety";
   return null;
+};
+
+const normalizePlanId = (value: string | null | undefined) => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["day-shield", "rush-hour-cover", "night-safety"].includes(normalized)) return normalized;
+  if (normalized === "day shield") return "day-shield";
+  if (normalized === "rush hour cover") return "rush-hour-cover";
+  if (normalized === "night safety") return "night-safety";
+  return null;
+};
+
+const normalizeClaimLifecycleStatus = (status?: string | null): ClaimLifecycleStatus => {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "approved") return "approved";
+  if (normalized === "rejected") return "rejected";
+  return "pending";
 };
 
 const validateUPI = (upiId: string) => {
@@ -240,12 +241,11 @@ const WorkerDashboard = () => {
   const [upiId, setUpiId] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [demoTriggerMessage, setDemoTriggerMessage] = useState("");
-  const [demoPayoutDetails, setDemoPayoutDetails] = useState<{ expectedIncome: number; loss: number; payout: number; coverageLimit: number } | null>(null);
-  const [demoVerification, setDemoVerification] = useState<{ activePolicy: boolean; validTimeWindow: boolean; thresholdMet: boolean; approved: boolean } | null>(null);
   const plansSectionRef = useRef<HTMLDivElement | null>(null);
   const [demoState, setDemoState] = useState(() => (user ? getWorkerDemoState(user) : getWorkerDemoState({ email: "" })));
   const [payoutCelebration, setPayoutCelebration] = useState<{ amount: number; walletBalance: number } | null>(null);
+  const [workerId, setWorkerId] = useState<number | null>(null);
+  const [latestClaim, setLatestClaim] = useState<ClaimLifecycle | null>(null);
   const [lastAutoClaimKey, setLastAutoClaimKey] = useState("");
 
   const userName = toTitleCase(user?.name || tx(language, "Worker", "वर्कर"));
@@ -315,28 +315,46 @@ const WorkerDashboard = () => {
 
   const riskLevel = demoState.riskLevel;
   const recommendedPlanId = riskLevel === "HIGH" ? "day-shield" : riskLevel === "MEDIUM" ? "rush-hour-cover" : "night-safety";
-  const selectedFraudReason = demoState.fraudStatus === "Clear" ? "None" : (demoState.fraudReason || "Under review");
   const realtimeRiskLevel = rainImpactAssessment.riskLevel;
   const estimatedActivity = clamp(Math.round(100 - currentCondition.rainProbability - currentCondition.rainMm * 0.8), 10, 100);
+  const noOrdersFor30Min = estimatedActivity < 30;
   const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 500;
-  const autoClaimStatus = checkForClaim({ rain: currentCondition.rainMm, activity: estimatedActivity, expectedIncome: 600, coverageLimit });
-  const activeDisruptionType: DemoEventType | null = autoClaimStatus.triggered ? "Rain" : null;
-  const activeDisruptionLabel = activeDisruptionType === "Rain" ? "Heavy Rain" : null;
-  const estimatedRealtimePayout = autoClaimStatus.triggered ? autoClaimStatus.payout : 0;
+  const triggerReasons = [
+    currentCondition.rainMm > 50 ? "Rain" : null,
+    noOrdersFor30Min ? "Low Activity" : null,
+    currentCondition.aqi > 300 ? "Pollution" : null,
+  ].filter(Boolean) as string[];
+  const shouldTriggerClaim = currentCondition.rainMm > 50 && noOrdersFor30Min && policyActive;
+  const claimTriggered = triggerReasons.length >= 2;
+  const autoClaimTriggered = policyActive && (shouldTriggerClaim || claimTriggered);
   const rainTriggerState: "ACTIVE" | "SAFE" = currentCondition.rainMm > 50 ? "ACTIVE" : "SAFE";
   const aqiTriggerState: "ACTIVE" | "SAFE" = currentCondition.aqi > 300 ? "ACTIVE" : "SAFE";
-  const zoneTriggerState: "ACTIVE" | "SAFE" = estimatedActivity < 30 ? "ACTIVE" : "SAFE";
+  const zoneTriggerState: "ACTIVE" | "SAFE" = noOrdersFor30Min ? "ACTIVE" : "SAFE";
   const platformTriggerState: "MEDIUM" | "SAFE" = isWeatherLoading ? "MEDIUM" : "SAFE";
   const trafficTriggerState: "ACTIVE" | "MEDIUM" | "SAFE" = rainImpactAssessment.riskScore > 0.75
     ? "ACTIVE"
     : rainImpactAssessment.riskScore > 0.5
       ? "MEDIUM"
       : "SAFE";
-  const triggeredBy = [
-    rainTriggerState === "ACTIVE" ? "Rain" : null,
-    zoneTriggerState === "ACTIVE" ? "Low Activity" : null,
-    trafficTriggerState !== "SAFE" ? "High Traffic" : null,
-  ].filter(Boolean).join(" + ") || "No active disruption chain";
+  const triggeredBy = triggerReasons.join(" + ") || "No active disruption chain";
+  const claimStatus = latestClaim?.status || "pending";
+  const claimStatusLabel = claimStatus === "approved" ? "Approved" : claimStatus === "rejected" ? "Rejected" : "Pending";
+  const claimAmount = Number(latestClaim?.amount || Math.min(300, coverageLimit));
+  const claimTriggersLabel = latestClaim?.triggers?.length ? latestClaim.triggers.join(" + ") : triggeredBy;
+  const claimVisualState: "idle" | "triggered" | "processing" | "credited" | "rejected" = claimStatus === "approved"
+    ? "credited"
+    : claimStatus === "rejected"
+      ? "rejected"
+      : latestClaim
+        ? "processing"
+        : autoClaimTriggered
+          ? "triggered"
+          : "idle";
+  const liveStatusMessage = claimVisualState === "credited"
+    ? "✅ ₹300 credited successfully"
+    : claimVisualState === "processing"
+      ? "⚡ Disruption detected → Claim processing..."
+      : "No disruption detected";
 
   const walletImpactLines = useMemo(() => {
     const entries = demoState.transactions.slice(0, 3).map((tx) => {
@@ -407,79 +425,12 @@ const WorkerDashboard = () => {
     navigate("/login");
   };
 
-  const handleSimulateHeavyRain = () => {
-    if (!user) return;
+  const refreshClaim = async (nextWorkerId?: number | null) => {
+    const resolvedWorkerId = nextWorkerId ?? workerId;
+    if (!resolvedWorkerId) return;
 
-    const rainMm = 65;
-    const simulatedActivity = 20;
-    const threshold = 50;
-    const expectedIncome = 600;
-    const lossPercentage = 0.5;
-    const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 500;
-    const hasActivePlan = Boolean(policyActive && activePlan);
-    const validTimeWindow = activePlan ? isWithinCoverageWindow(activePlan.window) : false;
-    const thresholdMet = rainMm > threshold && simulatedActivity < 30;
-    const approved = hasActivePlan && validTimeWindow && thresholdMet;
-
-    setDemoVerification({
-      activePolicy: hasActivePlan,
-      validTimeWindow,
-      thresholdMet,
-      approved,
-    });
-
-    if (!approved) {
-      setDemoTriggerMessage("No claim request — conditions are below payout threshold");
-      setDemoPayoutDetails(null);
-      return;
-    }
-
-    const loss = expectedIncome * lossPercentage;
-    const payout = Math.min(loss, coverageLimit);
-
-    const review = submitClaimReview(user, {
-      triggerType: "Rain",
-      payoutAmount: payout,
-      expectedIncome,
-      loss,
-      coverageLimit,
-      rainMm,
-      activity: simulatedActivity,
-      riskScore: rainImpactAssessment.riskScore,
-      riskLevel: rainImpactAssessment.riskLevel,
-      activePolicy: hasActivePlan,
-      validTimeWindow,
-      thresholdMet,
-      fraudReason: null,
-    });
-
-    const next = review.state;
-
-    setDemoState(next);
-    saveWorkerDemoState(user, next);
-    setPayoutCelebration(null);
-    setDemoPayoutDetails({ expectedIncome, loss, payout, coverageLimit });
-    setDemoTriggerMessage(`⚡ Rain detected (${rainMm}mm)  •  ⚡ Activity dropped  •  ⏳ ₹${payout} sent for admin approval`);
-
-    if (user) {
-      void syncClaimToDb({
-        worker_email: user.email,
-        trigger_type: "rain_disruption_demo",
-        payout_amount: payout,
-        status: "Under Review",
-        auto_generated: true,
-      })
-        .then((response) => {
-          if (response?.claim?.id) {
-            linkClaimReviewToDbId(review.claim.id, response.claim.id);
-          }
-        })
-        .catch(() => {
-          // Demo mode continues even if DB sync fails.
-        });
-    }
-
-    toast.info(`Claim submitted for approval: ₹${payout}`);
+    const { claim } = await fetchLatestClaimByUserId(resolvedWorkerId);
+    setLatestClaim(claim);
   };
 
   const startPlanPayment = (planId: string) => {
@@ -582,8 +533,8 @@ const WorkerDashboard = () => {
               await activatePlan(planId);
               resolve();
             } catch {
-              setPaymentStatus(tx(language, "Claim under review", "क्लेम समीक्षा में है"));
-              toast.warning(tx(language, "Claim under review. Payment verification failed.", "क्लेम समीक्षा में है। पेमेंट वेरिफिकेशन असफल रहा।"));
+              setPaymentStatus(tx(language, "Payment verification failed", "पेमेंट वेरिफिकेशन असफल"));
+              toast.warning(tx(language, "Payment verification failed.", "पेमेंट वेरिफिकेशन असफल रहा।"));
               reject(new Error("Verification failed"));
             }
           },
@@ -648,12 +599,51 @@ const WorkerDashboard = () => {
     let cancelled = false;
 
     void fetchWorkerPortalState(user.email)
-      .then((portal) => {
+      .then(async (portal) => {
         if (cancelled) return;
 
         const activePolicy = portal.activePolicy;
-        const activePlanId = inferPlanIdFromPolicy(activePolicy);
+        const policyPlanId = inferPlanIdFromPolicy(activePolicy);
         const policyIsActive = Boolean(activePolicy && String(activePolicy.status).toLowerCase() === "active");
+
+        let profilePlanId: string | null = normalizePlanId(portal.worker?.active_plan || null);
+        let profilePlanIsActive = Boolean(
+          portal.worker?.active_plan
+          && portal.worker?.plan_end_time
+          && new Date(portal.worker.plan_end_time).getTime() > Date.now(),
+        );
+
+        if (!profilePlanId || !profilePlanIsActive) {
+          try {
+            const profile = await fetchUserProfile(user.email);
+            profilePlanId = normalizePlanId(profile.active_plan);
+            profilePlanIsActive = Boolean(
+              profile.active_plan
+              && profile.plan_end_time
+              && new Date(profile.plan_end_time).getTime() > Date.now(),
+            );
+          } catch {
+            // Non-blocking profile hydration fallback.
+          }
+        }
+
+        const activePlanId = profilePlanId || policyPlanId;
+        const policyIsCurrentlyActive = profilePlanIsActive || policyIsActive;
+        const resolvedWorkerId = Number(portal.worker?.id || 0) || null;
+        setWorkerId(resolvedWorkerId);
+
+        if (portal.latestClaim) {
+          setLatestClaim({
+            id: Number(portal.latestClaim.id),
+            userId: Number(portal.latestClaim.worker_id),
+            triggers: Array.isArray(portal.latestClaim.triggers) ? portal.latestClaim.triggers : [],
+            status: normalizeClaimLifecycleStatus(portal.latestClaim.status),
+            amount: Number(portal.latestClaim.payout_amount || 0),
+            createdAt: String(portal.latestClaim.created_at),
+          });
+        } else {
+          setLatestClaim(null);
+        }
 
         setUser((previous) => {
           if (!previous) return previous;
@@ -668,7 +658,7 @@ const WorkerDashboard = () => {
             city: portal.worker?.city || previous.city,
             persona_type: portal.worker?.persona_type || previous.persona_type,
             deliveryPartner: portal.worker?.delivery_partner || previous.deliveryPartner,
-            policyActive: policyIsActive,
+            policyActive: policyIsCurrentlyActive,
             purchasedPlans: nextPurchasedPlans,
           };
 
@@ -682,6 +672,39 @@ const WorkerDashboard = () => {
 
           if (!changed) return previous;
           setSession(next);
+          return next;
+        });
+
+        setDemoState((current) => {
+          const mappedLastEventStatus: "Credited" | "Rejected" = String(portal.latestClaim?.status).toLowerCase() === "approved"
+            ? "Credited"
+            : "Rejected";
+
+          const next = {
+            ...current,
+            walletBalance: Number(portal.walletBalance ?? current.walletBalance),
+            claimReviewStatus: portal.latestClaim
+              ? (String(portal.latestClaim.status).toLowerCase() === "approved"
+                ? "Approved"
+                : String(portal.latestClaim.status).toLowerCase() === "rejected"
+                  ? "Rejected"
+                  : "Pending Approval")
+              : current.claimReviewStatus,
+            claimReviewReason: portal.latestClaim?.review_reason || current.claimReviewReason,
+            lastEvent: portal.latestClaim
+              ? ({
+                eventType: "Rain" as const,
+                amount: Number(portal.latestClaim.payout_amount || 0),
+                status: mappedLastEventStatus,
+                timestamp: portal.latestClaim.created_at,
+              } as typeof current.lastEvent)
+              : current.lastEvent,
+          };
+
+          if (user) {
+            saveWorkerDemoState(user, next);
+          }
+
           return next;
         });
       })
@@ -746,67 +769,43 @@ const WorkerDashboard = () => {
   }, [payoutCelebration]);
 
   useEffect(() => {
-    if (!user || !policyActive) return;
-
-    const validTimeWindow = activePlan ? isWithinCoverageWindow(activePlan.window) : false;
-    const thresholdMet = currentCondition.rainMm > 50 && estimatedActivity < 30;
-    const claim = checkForClaim({ rain: currentCondition.rainMm, activity: estimatedActivity, expectedIncome: 600, coverageLimit });
-    const approved = Boolean(activePlan && validTimeWindow && thresholdMet && claim.triggered);
-    if (!approved) return;
+    if (!user || !workerId || !policyActive || !activePlan || !autoClaimTriggered) return;
 
     const claimWindow = new Date().toISOString().slice(0, 13);
-    const claimKey = `Rain-${claimWindow}`;
+    const claimKey = `AUTO-${activePlan.id}-${claimWindow}-${triggeredBy}`;
     if (claimKey === lastAutoClaimKey) return;
 
-    const review = submitClaimReview(user, {
-      triggerType: "Rain",
-      payoutAmount: claim.payout,
-      expectedIncome: 600,
-      loss: 600 * 0.5,
-      coverageLimit,
-      rainMm: currentCondition.rainMm,
-      activity: estimatedActivity,
-      riskScore: rainImpactAssessment.riskScore,
-      riskLevel: rainImpactAssessment.riskLevel,
-      activePolicy: true,
-      validTimeWindow,
-      thresholdMet,
-      fraudReason: null,
-    });
-
-    setDemoState(review.state);
     setLastAutoClaimKey(claimKey);
+    const payout = Math.min(300, coverageLimit);
 
-    void syncClaimToDb({
-      worker_email: user.email,
-      trigger_type: "rain_disruption",
-      payout_amount: claim.payout,
-      status: "Under Review",
-      auto_generated: true,
+    void createClaimLifecycle({
+      userId: workerId,
+      triggers: triggerReasons,
+      amount: payout,
     })
-      .then((response) => {
-        if (response?.claim?.id) {
-          linkClaimReviewToDbId(review.claim.id, response.claim.id);
-        }
+      .then(async (response) => {
+        setLatestClaim(response.claim);
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const approved = await approveClaimLifecycle(response.claim.id);
+        setLatestClaim(approved.claim);
+        setPayoutCelebration({ amount: approved.claim.amount, walletBalance: approved.walletBalance });
+
+        const portal = await fetchWorkerPortalState(user.email);
+        setDemoState((current) => {
+          const next = {
+            ...current,
+            walletBalance: Number(portal.walletBalance ?? current.walletBalance),
+          };
+          saveWorkerDemoState(user, next);
+          return next;
+        });
+
+        toast.success("💸 ₹300 credited due to rain disruption");
       })
       .catch(() => {
-        // Keep the simulation responsive even if DB write fails.
+        toast.error("Unable to create claim right now");
       });
-
-    if (review.claim.fraudReason) {
-      void syncFraudAlertToDb({
-        worker_email: user.email,
-        reason: review.claim.fraudReason,
-        flag_level: "MEDIUM",
-        resolved: false,
-      }).catch(() => {
-        // Fraud alert can be retried later.
-      });
-    }
-
-    setDemoTriggerMessage(`⚡ Live claim created for admin review • ₹${claim.payout} pending approval`);
-    toast.info(`Claim sent for admin approval: ₹${claim.payout}`);
-  }, [currentCondition.aqi, currentCondition.rainMm, currentCondition.rainProbability, currentTemp, estimatedActivity, lastAutoClaimKey, policyActive, rainImpactAssessment.riskLevel, rainImpactAssessment.riskScore, user]);
+  }, [activePlan, autoClaimTriggered, coverageLimit, lastAutoClaimKey, policyActive, triggerReasons, triggeredBy, user, workerId]);
 
   useEffect(() => {
     if (!user?.email) return;
@@ -932,11 +931,6 @@ const WorkerDashboard = () => {
             <span className="text-sm text-muted-foreground hidden md:block">{tx(language, "Worker Dashboard", "वर्कर डैशबोर्ड")}</span>
           </div>
           <div className="flex items-center gap-3">
-            {user?.role === "admin" && (
-              <Link to="/admin">
-                <Button variant="ghost" size="sm" className="text-xs">{tx(language, "Admin Panel", "एडमिन पैनल")}</Button>
-              </Link>
-            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button type="button" className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center hover:bg-primary/20 transition-colors" aria-label="Open profile menu">
@@ -1034,36 +1028,37 @@ const WorkerDashboard = () => {
                 )}
               </div>
 
-              <div className="rounded-2xl p-6 border border-primary/25 bg-[#111827] shadow-[0_0_20px_rgba(59,130,246,0.1)]">
+              <div className={`rounded-2xl p-6 border shadow-[0_0_20px_rgba(59,130,246,0.1)] ${claimVisualState === "credited" ? "border-emerald-400/40 bg-[rgba(16,32,24,0.9)] shadow-[0_0_28px_rgba(34,197,94,0.18)]" : claimVisualState === "processing" ? "border-amber-300/35 bg-[rgba(35,26,7,0.88)] shadow-[0_0_28px_rgba(250,204,21,0.16)]" : claimVisualState === "triggered" || claimVisualState === "rejected" ? "border-red-400/35 bg-[rgba(49,16,16,0.88)] shadow-[0_0_28px_rgba(248,113,113,0.14)]" : "border-primary/25 bg-[#111827]"}`}>
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-display font-semibold text-foreground">Smart Claim Engine (AI + Verification) ⚡</h3>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 inline-flex items-center gap-1.5">
-                    <span className="inline-flex h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-                    Live
-                  </span>
+                  <div>
+                    <h3 className="font-display font-semibold text-foreground">⚡ Zero-Touch Claim Activated</h3>
+                    <p className="text-xs text-muted-foreground mt-1">Live Status: {liveStatusMessage}</p>
+                  </div>
                 </div>
-                <div className="mt-3 space-y-1.5 text-sm">
-                  <p><span className="text-muted-foreground">Last Trigger:</span> <span className="font-medium text-foreground">{demoState.lastEvent?.eventType || "None"}</span></p>
-                  <p className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Review Status:</span>
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${demoState.claimReviewStatus === "Pending Approval" ? "border-amber-300/40 bg-amber-500/10 text-amber-300" : demoState.claimReviewStatus === "Approved" ? "border-accent/30 bg-accent/10 text-accent" : demoState.claimReviewStatus === "Rejected" ? "border-risk-high/30 bg-risk-high-bg text-risk-high" : "border-border/60 bg-muted/30 text-muted-foreground"}`}>
-                      {demoState.claimReviewStatus || "None"}
+
+                <div className="mt-4 rounded-xl border border-border/60 bg-black/15 p-4 text-sm space-y-2">
+                  <p><span className="text-muted-foreground">🌧 Rain Trigger:</span> <span className={`font-semibold ${currentCondition.rainMm > 50 ? "text-red-300" : "text-foreground"}`}>{currentCondition.rainMm > 50 ? "ACTIVE" : "SAFE"}</span></p>
+                  <p><span className="text-muted-foreground">📉 Activity Drop:</span> <span className={`font-semibold ${noOrdersFor30Min ? "text-red-300" : "text-foreground"}`}>{noOrdersFor30Min ? "DETECTED" : "NORMAL"}</span></p>
+                  <p><span className="text-muted-foreground">🧠 AI Decision:</span> <span className={`font-semibold ${claimTriggered ? "text-amber-300" : "text-foreground"}`}>{claimTriggered ? "Income Loss Confirmed" : "Monitoring"}</span></p>
+                  <p><span className="text-muted-foreground">📄 Claim Status:</span> <span className={`font-semibold ${claimStatus === "approved" ? "text-emerald-300" : claimStatus === "rejected" ? "text-red-300" : "text-amber-300"}`}>{claimStatus === "approved" ? "Auto-Created" : claimStatus === "rejected" ? "Not Eligible" : claimTriggered ? "Auto-Created" : "No disruption detected"}</span></p>
+                  <p>
+                    <span className="text-muted-foreground">💸 Payout:</span>{" "}
+                    <span className={`font-semibold ${claimStatus === "approved" ? "text-emerald-300" : claimStatus === "rejected" ? "text-red-300" : "text-amber-300"}`}>
+                      {claimStatus === "pending" && claimTriggered
+                        ? "₹300 Processing..."
+                        : claimStatus === "approved"
+                          ? "₹300 Credited"
+                          : "₹0"}
                     </span>
                   </p>
-                  <p><span className="text-muted-foreground">Pending Amount:</span> <span className="font-medium text-foreground">₹{demoState.lastEvent?.amount || 0}</span></p>
-                  <p><span className="text-muted-foreground">Submission Route:</span> <span className="font-medium text-foreground">AI check → admin review → payout</span></p>
-                  <p><span className="text-muted-foreground">Triggered by:</span> <span className="font-medium text-foreground">{triggeredBy}</span></p>
+                  <p><span className="text-muted-foreground">Triggered by:</span> <span className="font-semibold text-foreground">{claimTriggersLabel}</span></p>
                 </div>
-                <Button className="w-full mt-3" onClick={handleSimulateHeavyRain}>Simulate Heavy Rain 🌧</Button>
-                {demoVerification && (
-                  <div className="mt-3 rounded-md border border-amber-300/25 bg-amber-500/5 p-3 text-xs space-y-1.5">
-                    <p className="font-medium text-foreground">AI pre-check</p>
-                    <p className={demoVerification.activePolicy ? "text-accent" : "text-risk-medium"}>{demoVerification.activePolicy ? "✔ Active policy" : "✖ Active policy"}</p>
-                    <p className={demoVerification.validTimeWindow ? "text-accent" : "text-risk-medium"}>{demoVerification.validTimeWindow ? "✔ Valid time window" : "✖ Valid time window"}</p>
-                    <p className={demoVerification.thresholdMet ? "text-accent" : "text-risk-medium"}>{demoVerification.thresholdMet ? "✔ Weather threshold met" : "✖ Weather threshold not strong enough"}</p>
-                    <p className={demoVerification.approved ? "text-amber-300 font-medium" : "text-risk-medium"}>{demoVerification.approved ? "Pending approval from admin" : "No claim submitted"}</p>
-                  </div>
-                )}
+
+                <div className="mt-2">
+                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => void refreshClaim()}>
+                    Refresh claim
+                  </Button>
+                </div>
               </div>
             </div>
           </section>
@@ -1216,7 +1211,7 @@ const WorkerDashboard = () => {
                 <p className="font-semibold text-foreground">Security Check</p>
                 <p className="text-xs text-muted-foreground mt-2">✔ Location verified</p>
                 <p className="text-xs text-muted-foreground">✔ Device verified</p>
-                <p className="text-xs text-muted-foreground">✔ {demoState.fraudStatus === "Clear" ? "No suspicious activity" : "Activity under review"}</p>
+                <p className="text-xs text-muted-foreground">✔ {demoState.fraudStatus === "Clear" ? "No suspicious activity" : "Activity flagged"}</p>
               </div>
               <div className="rounded-xl p-4 bg-[#0F172A]/55 border border-border/40 text-sm">
                 <p className="font-semibold text-foreground">Why Trust This System</p>
@@ -1278,11 +1273,11 @@ const WorkerDashboard = () => {
                       <span className={`text-sm font-semibold ${tx.kind === "PAYOUT" ? "text-accent" : "text-foreground"}`}>
                         {tx.kind === "PAYOUT" ? `+₹${tx.amount}` : `-₹${tx.amount}`}
                       </span>
-                      <div className={`text-xs font-medium ${tx.status === "Credited" ? "text-accent" : tx.status === "Under Review" ? "text-risk-medium" : "text-muted-foreground"}`}>
+                      <div className={`text-xs font-medium ${tx.status === "Credited" ? "text-accent" : tx.kind === "PAYOUT" ? "text-amber-300" : "text-muted-foreground"}`}>
                         {tx.status === "Credited" ? (
                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Credited</span>
-                        ) : tx.status === "Under Review" ? (
-                          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Under Review</span>
+                        ) : tx.kind === "PAYOUT" ? (
+                          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Processing</span>
                         ) : (
                           "Debited"
                         )}

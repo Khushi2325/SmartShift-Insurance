@@ -6,15 +6,24 @@ import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
 import { getSession, setSession } from "@/lib/session";
 import { authenticateUser, validateEmailAuthenticity } from "@/lib/auth";
-import { fetchWorkerPortalState, syncWorkerToDb } from "@/lib/dbApi";
+import { fetchUserProfile, fetchWorkerPortalState, syncWorkerToDb } from "@/lib/dbApi";
 import { tx, useAppLanguage } from "@/lib/preferences";
+
+const normalizePlanId = (value: string | null | undefined) => {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["day-shield", "rush-hour-cover", "night-safety"].includes(normalized)) return normalized;
+  if (normalized === "day shield") return "day-shield";
+  if (normalized === "rush hour cover") return "rush-hour-cover";
+  if (normalized === "night safety") return "night-safety";
+  return null;
+};
 
 const LoginPage = () => {
   const language = useAppLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [loginMode, setLoginMode] = useState<"worker" | "admin">("worker");
   const navigate = useNavigate();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -30,16 +39,6 @@ const LoginPage = () => {
     const login = authenticateUser(email, password);
     if (!login.ok || !login.session) {
       setError(login.message || tx(language, "Unable to login.", "लॉगिन नहीं हो सका।"));
-      return;
-    }
-
-    if (loginMode === "admin" && login.session.role !== "admin") {
-      setError("This account is not an admin account.");
-      return;
-    }
-
-    if (loginMode === "worker" && login.session.role === "admin") {
-      setError("Switch to Admin tab to continue with admin account.");
       return;
     }
 
@@ -79,6 +78,26 @@ const LoginPage = () => {
           policyActive: Boolean(activePolicy && String(activePolicy.status).toLowerCase() === "active"),
           purchasedPlans: activePlanId ? [activePlanId] : nextSession.purchasedPlans,
         };
+
+        try {
+          const profile = await fetchUserProfile(login.session.email);
+          const planStillActive = Boolean(
+            profile.active_plan
+            && profile.plan_end_time
+            && new Date(profile.plan_end_time).getTime() > Date.now(),
+          );
+
+          const persistedPlanId = normalizePlanId(profile.active_plan);
+          if (planStillActive && persistedPlanId) {
+            nextSession = {
+              ...nextSession,
+              policyActive: true,
+              purchasedPlans: [persistedPlanId],
+            };
+          }
+        } catch {
+          // Fall back to policy bundle if profile fetch is unavailable.
+        }
       } catch {
         // Fall back to the session data if the portal fetch is temporarily unavailable.
       }
@@ -86,7 +105,7 @@ const LoginPage = () => {
 
     setSession(nextSession);
 
-    navigate(nextSession.role === "admin" ? "/admin" : "/dashboard");
+    navigate("/dashboard");
   };
 
   return (
@@ -109,7 +128,7 @@ const LoginPage = () => {
           <p className="text-primary-foreground/70 max-w-sm mx-auto">{tx(language, "Access your dashboard, view your coverage status, and manage your protection.", "अपना डैशबोर्ड देखें, कवरेज स्टेटस जांचें और सुरक्षा मैनेज करें।")}</p>
           <div className="mt-6 space-y-2 text-sm text-primary-foreground/80 max-w-xs mx-auto text-left">
             <p>⚡ Real-time risk detection</p>
-            <p>⚡ AI + admin review before payout</p>
+            <p>⚡ AI auto-claim + instant payout</p>
             <p>⚡ Zero paperwork</p>
           </div>
         </div>
@@ -124,28 +143,6 @@ const LoginPage = () => {
 
           <h1 className="font-display text-2xl font-bold mb-1 text-foreground">{tx(language, "Sign in", "साइन इन")}</h1>
           <p className="text-muted-foreground text-sm mb-8">{tx(language, "Enter your credentials to access your account", "अपने खाते में जाने के लिए विवरण दर्ज करें")}</p>
-          <div className="mb-4 grid grid-cols-2 gap-2 rounded-xl border border-border/70 bg-card/40 p-2 text-sm">
-            <button
-              type="button"
-              onClick={() => {
-                setLoginMode("worker");
-                setError("");
-              }}
-              className={`rounded-lg px-3 py-2 font-medium transition-colors ${loginMode === "worker" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              Worker Login
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLoginMode("admin");
-                setError("");
-              }}
-              className={`rounded-lg px-3 py-2 font-medium transition-colors ${loginMode === "admin" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              Admin Login
-            </button>
-          </div>
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

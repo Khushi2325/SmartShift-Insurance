@@ -11,7 +11,6 @@ import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import WorkerDashboard from "./pages/WorkerDashboard";
-import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
 import { getSession } from "./lib/session";
 import { SESSION_UPDATED_EVENT } from "./lib/session";
@@ -24,13 +23,6 @@ const queryClient = new QueryClient();
 const ProtectedWorkerRoute = ({ children }: { children: JSX.Element }) => {
   const session = getSession();
   if (!session) return <Navigate to="/login" replace />;
-  return children;
-};
-
-const ProtectedAdminRoute = ({ children }: { children: JSX.Element }) => {
-  const session = getSession();
-  if (!session) return <Navigate to="/login" replace />;
-  if (session.role !== "admin") return <Navigate to="/dashboard" replace />;
   return children;
 };
 
@@ -56,14 +48,6 @@ const AnimatedRoutes = () => {
               <ProtectedWorkerRoute>
                 <WorkerDashboard />
               </ProtectedWorkerRoute>
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <ProtectedAdminRoute>
-                <AdminDashboard />
-              </ProtectedAdminRoute>
             }
           />
           <Route

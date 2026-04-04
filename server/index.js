@@ -33,6 +33,25 @@ const dbPool = databaseUrl
   })
   : null;
 
+const ensureSupplementalSchema = async () => {
+  if (!dbPool) return;
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS wallets (
+      id SERIAL PRIMARY KEY,
+      worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE UNIQUE,
+      balance REAL NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await dbPool.query("ALTER TABLE claims ADD COLUMN IF NOT EXISTS triggers TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];");
+  await dbPool.query("ALTER TABLE wallets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();");
+  await dbPool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS active_plan TEXT;");
+  await dbPool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS plan_start_time TIMESTAMPTZ;");
+  await dbPool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS plan_end_time TIMESTAMPTZ;");
+};
+
 app.use(cors({ origin: true }));
 app.use(express.json());
 
@@ -107,6 +126,26 @@ const checkForClaim = ({ rain, activity }) => {
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
+const normalizeClaimStatus = (status) => {
+  const value = String(status || "").trim().toLowerCase();
+  if (value === "approved") return "approved";
+  if (value === "rejected") return "rejected";
+  return "pending";
+};
+
+const serializeClaim = (claimRow) => {
+  if (!claimRow) return null;
+
+  return {
+    id: claimRow.id,
+    userId: claimRow.worker_id,
+    triggers: Array.isArray(claimRow.triggers) ? claimRow.triggers : [],
+    status: normalizeClaimStatus(claimRow.status),
+    amount: Number(claimRow.payout_amount || 0),
+    createdAt: claimRow.created_at,
+  };
+};
+
 const getWorkerIdByEmail = async (email) => {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
@@ -119,7 +158,7 @@ const getWorkerPortalState = async (email) => {
   const normalizedEmail = normalizeEmail(email);
 
   const workerResult = await dbPool.query(
-    `SELECT id, name, email, city, persona_type, delivery_partner, created_at
+    `SELECT id, name, email, city, persona_type, delivery_partner, active_plan, plan_start_time, plan_end_time, created_at
      FROM workers
      WHERE LOWER(email) = $1
      LIMIT 1`,
@@ -152,8 +191,166 @@ const getWorkerPortalState = async (email) => {
   return {
     worker,
     activePolicy: policyResult.rows[0] || null,
+    wallet: null,
+    walletBalance: 0,
+    latestClaim: null,
     recentClaims: claimsResult.rows,
   };
+};
+
+const getWalletForWorker = async (workerId) => {
+  const result = await dbPool.query(
+    `
+    INSERT INTO wallets (worker_id, balance)
+    VALUES ($1, 0)
+    ON CONFLICT (worker_id) DO UPDATE SET updated_at = NOW()
+    RETURNING *
+    `,
+    [workerId],
+  );
+
+  return result.rows[0] || null;
+};
+
+const getLatestClaimForWorker = async (workerId) => {
+  const result = await dbPool.query(
+    `SELECT *
+     FROM claims
+     WHERE worker_id = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [workerId],
+  );
+
+  return result.rows[0] || null;
+};
+
+const getUserPolicyBundle = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
+
+  const workerResult = await dbPool.query(
+    `SELECT id, name, email, city, persona_type, delivery_partner, active_plan, plan_start_time, plan_end_time, created_at
+     FROM workers
+     WHERE LOWER(email) = $1
+     LIMIT 1`,
+    [normalizedEmail],
+  );
+
+  const worker = workerResult.rows[0] || null;
+  if (!worker) {
+    return { worker: null, activePolicy: null, wallet: null, walletBalance: 0, latestClaim: null, recentClaims: [] };
+  }
+
+  const [activePolicy, wallet, latestClaim, recentClaims] = await Promise.all([
+    dbPool.query(
+      `SELECT *
+       FROM insurance_policies
+       WHERE worker_id = $1 AND status = 'active'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [worker.id],
+    ).then((result) => result.rows[0] || null),
+    getWalletForWorker(worker.id),
+    getLatestClaimForWorker(worker.id),
+    dbPool.query(
+      `SELECT *
+       FROM claims
+       WHERE worker_id = $1
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [worker.id],
+    ).then((result) => result.rows),
+  ]);
+
+  return {
+    worker,
+    activePolicy,
+    wallet,
+    walletBalance: Number(wallet?.balance || 0),
+    latestClaim,
+    recentClaims,
+  };
+};
+
+const getUserProfile = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
+
+  const workerResult = await dbPool.query(
+    `SELECT id, name, email, city, persona_type, delivery_partner, active_plan, plan_start_time, plan_end_time, created_at
+     FROM workers
+     WHERE LOWER(email) = $1
+     LIMIT 1`,
+    [normalizedEmail],
+  );
+
+  const worker = workerResult.rows[0] || null;
+  if (!worker) return null;
+
+  const now = Date.now();
+  const planEndTimeMs = worker.plan_end_time ? new Date(worker.plan_end_time).getTime() : 0;
+  const planActive = Boolean(worker.active_plan && planEndTimeMs > now);
+
+  return {
+    id: worker.id,
+    email: worker.email,
+    active_plan: planActive ? worker.active_plan : null,
+    plan_start_time: planActive ? worker.plan_start_time : null,
+    plan_end_time: planActive ? worker.plan_end_time : null,
+  };
+};
+
+const createClaimRecord = async ({ workerEmail, workerId, triggers, amount, status, triggerType, autoGenerated, reviewer, reviewReason }) => {
+  const resolvedWorkerId = workerId || await getWorkerIdByEmail(workerEmail);
+  if (!resolvedWorkerId) return { error: "Worker not found", status: 404 };
+  const normalizedStatus = normalizeClaimStatus(status);
+
+  const result = await dbPool.query(
+    `
+    INSERT INTO claims (worker_id, trigger_type, triggers, payout_amount, status, auto_generated, reviewer, review_reason, reviewed_at)
+    VALUES ($1, $2, $3, $4, $5, COALESCE($6, TRUE), $7, $8, CASE WHEN $5 IN ('approved', 'Approved', 'rejected', 'Rejected') THEN NOW() ELSE NULL END)
+    RETURNING *
+    `,
+    [
+      resolvedWorkerId,
+      triggerType || (Array.isArray(triggers) && triggers[0] ? String(triggers[0]) : "manual"),
+      Array.isArray(triggers) ? triggers : [],
+      amount,
+      normalizedStatus,
+      autoGenerated,
+      reviewer || null,
+      reviewReason || null,
+    ],
+  );
+
+  return { claim: result.rows[0] };
+};
+
+const creditWallet = async ({ workerEmail, amount, claimId }) => {
+  const workerId = await getWorkerIdByEmail(workerEmail);
+  if (!workerId) return { error: "Worker not found for given email", status: 404 };
+
+  const result = await dbPool.query(
+    `
+    INSERT INTO wallets (worker_id, balance)
+    VALUES ($1, $2)
+    ON CONFLICT (worker_id) DO UPDATE SET
+      balance = wallets.balance + EXCLUDED.balance,
+      updated_at = NOW()
+    RETURNING *
+    `,
+    [workerId, amount],
+  );
+
+  if (claimId) {
+    await dbPool.query(
+      `UPDATE claims
+       SET status = 'approved', reviewed_at = NOW()
+       WHERE id = $1 AND worker_id = $2`,
+      [claimId, workerId],
+    );
+  }
+
+  return { wallet: result.rows[0] };
 };
 
 app.get("/api/db/workers/portal", async (req, res) => {
@@ -165,10 +362,81 @@ app.get("/api/db/workers/portal", async (req, res) => {
   }
 
   try {
-    const portalState = await getWorkerPortalState(email);
+    const portalState = await getUserPolicyBundle(email);
     return res.json(portalState);
   } catch {
     return res.status(500).json({ error: "Failed to fetch worker portal state" });
+  }
+});
+
+app.get("/api/user/policy", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const email = String(req.query.email || "").trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: "email is required" });
+  }
+
+  try {
+    const bundle = await getUserPolicyBundle(email);
+    return res.json(bundle);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch user policy" });
+  }
+});
+
+app.get("/api/user/profile", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const email = String(req.query.email || "").trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: "email is required" });
+  }
+
+  try {
+    const profile = await getUserProfile(email);
+    if (!profile) {
+      return res.status(404).json({ error: "Worker not found" });
+    }
+
+    return res.json(profile);
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch user profile" });
+  }
+});
+
+app.get("/api/claim/latest", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const email = String(req.query.email || "").trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: "email is required" });
+  }
+
+  try {
+    const workerId = await getWorkerIdByEmail(email);
+    if (!workerId) return res.status(404).json({ error: "Worker not found for given email" });
+
+    const claim = await getLatestClaimForWorker(workerId);
+    return res.json({ claim: serializeClaim(claim) });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch latest claim" });
+  }
+});
+
+app.get("/api/claims/latest", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const userId = Number(req.query.userId);
+  if (!userId) {
+    return res.status(400).json({ error: "userId is required" });
+  }
+
+  try {
+    const claim = await getLatestClaimForWorker(userId);
+    return res.json({ claim: serializeClaim(claim) });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch latest claim" });
   }
 });
 
@@ -265,6 +533,27 @@ app.post("/api/db/policies", async (req, res) => {
 
     if (String(status).toLowerCase() === "active") {
       await dbPool.query("UPDATE insurance_policies SET status = 'inactive' WHERE worker_id = $1 AND status = 'active'", [workerId]);
+      await dbPool.query(
+        `
+        UPDATE workers
+        SET active_plan = $1,
+            plan_start_time = NOW(),
+            plan_end_time = NOW() + interval '12 hours'
+        WHERE id = $2
+        `,
+        [plan_id, workerId],
+      );
+    } else {
+      await dbPool.query(
+        `
+        UPDATE workers
+        SET active_plan = NULL,
+            plan_start_time = NULL,
+            plan_end_time = NULL
+        WHERE id = $1
+        `,
+        [workerId],
+      );
     }
 
     const result = await dbPool.query(
@@ -281,27 +570,208 @@ app.post("/api/db/policies", async (req, res) => {
   }
 });
 
-app.post("/api/db/claims", async (req, res) => {
+app.post("/api/claim", async (req, res) => {
   if (!requireDb(res)) return;
 
-  const { worker_email, trigger_type, payout_amount, status, auto_generated, reviewer, review_reason } = req.body || {};
-  if (!worker_email || !trigger_type || payout_amount === undefined || !status) {
-    return res.status(400).json({ error: "worker_email, trigger_type, payout_amount, and status are required" });
+  const { worker_email, triggers, amount, status, trigger_type, auto_generated, reviewer, review_reason } = req.body || {};
+  if (!worker_email || amount === undefined || !status) {
+    return res.status(400).json({ error: "worker_email, amount, and status are required" });
   }
 
   try {
-    const workerId = await getWorkerIdByEmail(worker_email);
-    if (!workerId) return res.status(404).json({ error: "Worker not found for given email" });
+    const result = await createClaimRecord({
+      workerEmail: worker_email,
+      triggers: Array.isArray(triggers) ? triggers : trigger_type ? [trigger_type] : [],
+      amount,
+      status,
+      triggerType: trigger_type,
+      autoGenerated,
+      reviewer,
+      reviewReason: review_reason,
+    });
 
-    const result = await dbPool.query(
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error });
+    }
+
+    return res.json(result);
+  } catch {
+    return res.status(500).json({ error: "Failed to create claim" });
+  }
+});
+
+app.post("/api/claims/create", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const { userId, triggers, amount } = req.body || {};
+  if (!userId || amount === undefined) {
+    return res.status(400).json({ error: "userId and amount are required" });
+  }
+
+  try {
+    const result = await createClaimRecord({
+      workerId: Number(userId),
+      triggers: Array.isArray(triggers) ? triggers : [],
+      amount: Number(amount),
+      status: "pending",
+      triggerType: Array.isArray(triggers) && triggers[0] ? String(triggers[0]) : "manual",
+      autoGenerated: true,
+      reviewer: null,
+      reviewReason: null,
+    });
+
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error });
+    }
+
+    return res.json({ claim: serializeClaim(result.claim) });
+  } catch {
+    return res.status(500).json({ error: "Failed to create claim" });
+  }
+});
+
+app.post("/api/claims/:id/approve", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const claimId = Number(req.params.id);
+  if (!claimId) {
+    return res.status(400).json({ error: "valid claim id is required" });
+  }
+
+  try {
+    const claimResult = await dbPool.query("SELECT * FROM claims WHERE id = $1 LIMIT 1", [claimId]);
+    const claim = claimResult.rows[0];
+    if (!claim) {
+      return res.status(404).json({ error: "Claim not found" });
+    }
+
+    const currentStatus = normalizeClaimStatus(claim.status);
+    if (currentStatus === "approved") {
+      const wallet = await getWalletForWorker(claim.worker_id);
+      return res.json({ claim: serializeClaim(claim), walletBalance: Number(wallet?.balance || 0) });
+    }
+
+    if (currentStatus === "rejected") {
+      return res.status(409).json({ error: "Cannot approve a rejected claim" });
+    }
+
+    const walletResult = await dbPool.query(
       `
-      INSERT INTO claims (worker_id, trigger_type, payout_amount, status, auto_generated, reviewer, review_reason, reviewed_at)
-      VALUES ($1, $2, $3, $4, COALESCE($5, TRUE), $6, $7, CASE WHEN $4 IN ('Approved', 'Rejected') THEN NOW() ELSE NULL END)
+      INSERT INTO wallets (worker_id, balance)
+      VALUES ($1, $2)
+      ON CONFLICT (worker_id) DO UPDATE SET
+        balance = wallets.balance + EXCLUDED.balance,
+        updated_at = NOW()
       RETURNING *
       `,
-      [workerId, trigger_type, payout_amount, status, auto_generated, reviewer || null, review_reason || null],
+      [claim.worker_id, Number(claim.payout_amount || 0)],
     );
-    return res.json({ claim: result.rows[0] });
+
+    const updatedClaimResult = await dbPool.query(
+      `
+      UPDATE claims
+      SET status = 'approved', reviewed_at = NOW(), reviewer = COALESCE(reviewer, 'system')
+      WHERE id = $1
+      RETURNING *
+      `,
+      [claimId],
+    );
+
+    return res.json({
+      claim: serializeClaim(updatedClaimResult.rows[0]),
+      walletBalance: Number(walletResult.rows[0]?.balance || 0),
+    });
+  } catch {
+    return res.status(500).json({ error: "Failed to approve claim" });
+  }
+});
+
+app.post("/api/claims/:id/reject", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const claimId = Number(req.params.id);
+  if (!claimId) {
+    return res.status(400).json({ error: "valid claim id is required" });
+  }
+
+  try {
+    const claimResult = await dbPool.query("SELECT * FROM claims WHERE id = $1 LIMIT 1", [claimId]);
+    const claim = claimResult.rows[0];
+    if (!claim) {
+      return res.status(404).json({ error: "Claim not found" });
+    }
+
+    const currentStatus = normalizeClaimStatus(claim.status);
+    if (currentStatus === "approved") {
+      return res.status(409).json({ error: "Cannot reject an approved claim" });
+    }
+
+    const updatedClaimResult = await dbPool.query(
+      `
+      UPDATE claims
+      SET status = 'rejected', reviewed_at = NOW(), reviewer = COALESCE(reviewer, 'system')
+      WHERE id = $1
+      RETURNING *
+      `,
+      [claimId],
+    );
+
+    return res.json({ claim: serializeClaim(updatedClaimResult.rows[0]) });
+  } catch {
+    return res.status(500).json({ error: "Failed to reject claim" });
+  }
+});
+
+app.post("/api/wallet/credit", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const { worker_email, amount, claim_id } = req.body || {};
+  if (!worker_email || amount === undefined) {
+    return res.status(400).json({ error: "worker_email and amount are required" });
+  }
+
+  try {
+    const result = await creditWallet({
+      workerEmail: worker_email,
+      amount: Number(amount),
+      claimId: claim_id ? Number(claim_id) : null,
+    });
+
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error });
+    }
+
+    return res.json(result);
+  } catch {
+    return res.status(500).json({ error: "Failed to credit wallet" });
+  }
+});
+
+app.post("/api/db/claims", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const { worker_email, trigger_type, payout_amount, status, auto_generated, reviewer, review_reason, triggers } = req.body || {};
+  if (!worker_email || payout_amount === undefined || !status) {
+    return res.status(400).json({ error: "worker_email, payout_amount, and status are required" });
+  }
+
+  try {
+    const result = await createClaimRecord({
+      workerEmail: worker_email,
+      triggers: Array.isArray(triggers) ? triggers : trigger_type ? [trigger_type] : [],
+      amount: payout_amount,
+      status,
+      triggerType: trigger_type,
+      autoGenerated: auto_generated,
+      reviewer,
+      reviewReason: review_reason,
+    });
+
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error });
+    }
+
+    return res.json(result);
   } catch {
     return res.status(500).json({ error: "Failed to create claim" });
   }
@@ -462,4 +932,8 @@ const pingRenderUrl = () => {
 app.listen(PORT, () => {
   console.log(`SmartShift app running on http://localhost:${PORT}`);
   pingRenderUrl();
+});
+
+void ensureSupplementalSchema().catch((error) => {
+  console.error("Failed to ensure supplemental schema", error instanceof Error ? error.message : String(error));
 });

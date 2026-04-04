@@ -6,7 +6,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-const expected = ["claims", "fraud_alerts", "insurance_policies", "risk_data", "workers"];
+const expected = ["claims", "fraud_alerts", "insurance_policies", "risk_data", "wallets", "workers"];
 
 const run = async () => {
   const result = await pool.query(

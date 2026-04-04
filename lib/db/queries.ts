@@ -5,6 +5,7 @@ import {
   riskData,
   insurancePolicies,
   claims,
+  wallets,
   fraudAlerts,
 } from "./schema";
 
@@ -117,6 +118,12 @@ export const fetchDashboardData = async (workerId: number) => {
     .orderBy(desc(insurancePolicies.createdAt))
     .limit(1);
 
+  const [wallet] = await db
+    .select()
+    .from(wallets)
+    .where(eq(wallets.workerId, workerId))
+    .limit(1);
+
   const recentClaims = await db
     .select()
     .from(claims)
@@ -127,6 +134,7 @@ export const fetchDashboardData = async (workerId: number) => {
   return {
     worker,
     activePolicy: activePolicy || null,
+    wallet: wallet || null,
     recentClaims,
   };
 };

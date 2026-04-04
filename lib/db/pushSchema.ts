@@ -27,6 +27,9 @@ const statements = [
   );
   `,
   `ALTER TABLE workers ADD COLUMN IF NOT EXISTS delivery_partner TEXT NOT NULL DEFAULT 'Zomato';`,
+  `ALTER TABLE workers ADD COLUMN IF NOT EXISTS active_plan TEXT;`,
+  `ALTER TABLE workers ADD COLUMN IF NOT EXISTS plan_start_time TIMESTAMPTZ;`,
+  `ALTER TABLE workers ADD COLUMN IF NOT EXISTS plan_end_time TIMESTAMPTZ;`,
   `CREATE INDEX IF NOT EXISTS workers_city_idx ON workers (city);`,
 
   `
@@ -63,6 +66,7 @@ const statements = [
     id SERIAL PRIMARY KEY,
     worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
     trigger_type TEXT NOT NULL,
+    triggers TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
     payout_amount REAL NOT NULL,
     status TEXT NOT NULL,
     auto_generated BOOLEAN NOT NULL DEFAULT TRUE,
@@ -75,7 +79,18 @@ const statements = [
   `ALTER TABLE claims ADD COLUMN IF NOT EXISTS reviewer TEXT;`,
   `ALTER TABLE claims ADD COLUMN IF NOT EXISTS review_reason TEXT;`,
   `ALTER TABLE claims ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;`,
+  `ALTER TABLE claims ADD COLUMN IF NOT EXISTS triggers TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];`,
   `CREATE INDEX IF NOT EXISTS claims_worker_created_idx ON claims (worker_id, created_at);`,
+
+  `
+  CREATE TABLE IF NOT EXISTS wallets (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE UNIQUE,
+    balance REAL NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  `,
+  `CREATE INDEX IF NOT EXISTS wallets_worker_uq ON wallets (worker_id);`,
 
   `
   CREATE TABLE IF NOT EXISTS fraud_alerts (
