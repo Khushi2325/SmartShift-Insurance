@@ -134,7 +134,7 @@ const FRAUD_FLAGS_KEY = "smartshift_fraud_flags_v2";
 
 const baseWorkerState = (): WorkerDemoState => ({
   riskLevel: "LOW",
-  weeklyPremium: 20,
+  weeklyPremium: 49,
   walletBalance: 0,
   transactions: [],
   lastEvent: null,
@@ -444,9 +444,9 @@ export const calculateRiskLevel = (metrics: Pick<RiskMetrics, "rainProbability" 
 };
 
 export const calculatePremium = (riskScore: number): number => {
-  const base = 20;
-  const variable = clamp(riskScore, 0, 1) * 50;
-  return Math.round(base + variable);
+  if (riskScore > 0.7) return 109;
+  if (riskScore > 0.4) return 79;
+  return 49;
 };
 
 export const calculateWeeklyPremiumBreakdown = ({
@@ -460,11 +460,11 @@ export const calculateWeeklyPremiumBreakdown = ({
   aqi: number;
   claimFreeThisWeek?: boolean;
 }): WeeklyPremiumBreakdown => {
-  const basePremium = 20;
-  const rainRiskAdjustment = riskScore > 0.6 ? 15 : riskScore > 0.3 ? 10 : 5;
-  const pollutionRiskAdjustment = aqi > 100 ? 5 : 2;
-  const loyaltyDiscount = claimFreeThisWeek ? 5 : 0;
-  const finalPremium = Math.max(basePremium + rainRiskAdjustment + pollutionRiskAdjustment - loyaltyDiscount, 0);
+  const basePremium = riskScore > 0.7 ? 109 : riskScore > 0.4 ? 79 : 49;
+  const rainRiskAdjustment = rainProbability > 70 ? 0 : 0;
+  const pollutionRiskAdjustment = aqi > 300 ? 0 : 0;
+  const loyaltyDiscount = claimFreeThisWeek ? 0 : 0;
+  const finalPremium = basePremium;
 
   return {
     basePremium,
@@ -506,22 +506,34 @@ export const generateRiskForecast = (
 export const checkForClaim = ({
   rain,
   activity,
+  aqi = 0,
+  temperature = 0,
   expectedIncome = 600,
-  coverageLimit = 500,
-  lossPercentage = 0.5,
+  coverageLimit = 800,
+  lossPercentage = 0.25,
 }: {
   rain: number;
   activity: number;
+  aqi?: number;
+  temperature?: number;
   expectedIncome?: number;
   coverageLimit?: number;
   lossPercentage?: number;
 }) => {
-  if (rain > 50 && activity < 30) {
+  const hasDisruption = rain > 20 || temperature > 40 || aqi > 300 || rain > 100;
+  if (hasDisruption && activity < 30) {
     const loss = expectedIncome * lossPercentage;
+
+    let reason = "Income disruption detected";
+    if (rain > 100) reason = "Flood risk disruption";
+    else if (rain > 20) reason = "Heavy rain disruption";
+    else if (temperature > 40) reason = "Heatwave disruption";
+    else if (aqi > 300) reason = "Pollution disruption";
+
     return {
       triggered: true,
       payout: Math.min(loss, coverageLimit),
-      reason: "Heavy rain disruption",
+      reason,
     };
   }
 
@@ -581,7 +593,7 @@ const detectFraud = (
     return { detected: true, reason: "Location mismatch: sudden location jump detected" };
   }
 
-  if (fraudScenario === "static-location" && (metrics.rainfallMm > 50 || metrics.aqi > 300)) {
+  if (fraudScenario === "static-location" && (metrics.rainfallMm > 20 || metrics.aqi > 300 || metrics.temperature > 40)) {
     return { detected: true, reason: "Abnormal pattern: static location during high-risk disruption" };
   }
 
@@ -617,7 +629,12 @@ export const simulateInsuranceEvent = (
   const riskResult = calculateRisk(metrics);
   const riskLevel = riskResult.riskLevel;
   const premium = premiumForRisk(riskResult.riskScore);
-  const claim = checkForClaim({ rain: metrics.rainfallMm, activity: metrics.activity ?? 100 });
+  const claim = checkForClaim({
+    rain: metrics.rainfallMm,
+    activity: metrics.activity ?? 100,
+    aqi: metrics.aqi,
+    temperature: metrics.temperature,
+  });
   const payout = claim.triggered ? { eventType: "Rain" as const, amount: claim.payout } : null;
   const fraudResult = detectFraud(fraudScenario, metrics);
 

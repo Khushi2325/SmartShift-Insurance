@@ -1,6 +1,6 @@
 # SmartShift
 
-SmartShift is a full-stack demo for delivery-worker income protection. It combines weather and air-quality risk signals, weekly micro-insurance plans, and an admin-reviewed claim workflow.
+SmartShift is a full-stack demo for delivery-worker income protection. It combines weather and air-quality risk signals, weekly micro-insurance plans, and an automated parametric claim workflow.
 
 ## Stack
 
@@ -14,7 +14,7 @@ SmartShift is a full-stack demo for delivery-worker income protection. It combin
 - Worker and admin login modes
 - Dynamic risk scoring (rain, AQI, temperature)
 - Plan purchase and activation
-- Claim submission with admin approval or rejection
+- Automatic claim trigger and wallet credit based on measurable disruption thresholds
 - Dashboard rehydration from backend on login and page load
 
 ## Project Structure

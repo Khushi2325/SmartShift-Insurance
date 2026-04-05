@@ -11,31 +11,31 @@ const fadeUp = {
 };
 
 const features = [
-  { icon: Brain, title: "AI Risk Prediction", desc: "Real-time disruption risk scoring using weather, AQI, and environmental signals." },
-  { icon: Zap, title: "Review-Backed Payouts", desc: "Claims are checked by AI and approved before money moves." },
-  { icon: Shield, title: "Fraud Protection", desc: "Multi-signal verification with behavioral analysis and graph-based detection." },
-  { icon: BarChart3, title: "Smart Shifts", desc: "AI-recommended safer working windows to reduce exposure and maximize earnings." },
+  { icon: Brain, title: "AI Risk Assessment", desc: "Dynamic Low/Medium/High risk scoring from weather, AQI, and disruption history." },
+  { icon: Zap, title: "Automatic Claim Trigger", desc: "When disruption thresholds and low activity are detected, claims are auto-created instantly." },
+  { icon: Shield, title: "Fraud Protection", desc: "GPS consistency, anomaly checks, duplicate-claim controls, and behavior-based verification." },
+  { icon: BarChart3, title: "Weekly Pricing Model", desc: "Affordable weekly plans aligned with gig-worker earning cycles and risk levels." },
 ];
 
 const steps = [
   { num: "01", title: "Sign Up & Select City", desc: "Register and choose your working city and preferences." },
-  { num: "02", title: "Get Risk Assessment", desc: "AI evaluates weather, AQI, and conditions to generate your risk score." },
-  { num: "03", title: "Activate Coverage", desc: "Pay a dynamic premium and activate protection for your shift window." },
-  { num: "04", title: "Admin Approved", desc: "If conditions cross thresholds, the claim waits for final approval before payout." },
+  { num: "02", title: "Get Risk Assessment", desc: "AI evaluates weather, AQI, location pattern, and disruption history." },
+  { num: "03", title: "Activate Weekly Plan", desc: "Choose Low, Medium, or High risk plan based on your earning dependency." },
+  { num: "04", title: "Auto Credit Payout", desc: "If threshold breach + reduced activity is detected, payout is credited to wallet automatically." },
 ];
 
 const featureHindi: Record<string, { title: string; desc: string }> = {
-  "AI Risk Prediction": { title: "AI जोखिम पूर्वानुमान", desc: "मौसम, AQI और पर्यावरण संकेतों से रियल-टाइम जोखिम स्कोरिंग।" },
-  "Review-Backed Payouts": { title: "समीक्षा-आधारित पेआउट", desc: "क्लेम पहले AI जांच से गुजरता है, फिर approval के बाद पेआउट होता है।" },
+  "AI Risk Assessment": { title: "AI जोखिम आकलन", desc: "मौसम, AQI और इतिहास से लो/मीडियम/हाई जोखिम स्कोरिंग।" },
+  "Automatic Claim Trigger": { title: "ऑटोमैटिक क्लेम ट्रिगर", desc: "थ्रेशहोल्ड और कम गतिविधि मिलते ही क्लेम अपने आप शुरू हो जाता है।" },
   "Fraud Protection": { title: "फ्रॉड सुरक्षा", desc: "व्यवहार विश्लेषण और मल्टी-सिग्नल वेरिफिकेशन से मजबूत सुरक्षा।" },
-  "Smart Shifts": { title: "स्मार्ट शिफ्ट्स", desc: "कम जोखिम और बेहतर कमाई के लिए AI सुझाए सुरक्षित समय।" },
+  "Weekly Pricing Model": { title: "साप्ताहिक प्राइसिंग मॉडल", desc: "गिग वर्कर्स के कमाई चक्र के अनुसार किफायती साप्ताहिक प्लान।" },
 };
 
 const stepHindi: Record<string, { title: string; desc: string }> = {
   "Sign Up & Select City": { title: "साइन अप करें और शहर चुनें", desc: "रजिस्टर करें और अपना कार्य शहर व प्राथमिकताएं चुनें।" },
-  "Get Risk Assessment": { title: "जोखिम मूल्यांकन पाएं", desc: "AI मौसम और AQI देखकर आपका जोखिम स्कोर बनाता है।" },
-  "Activate Coverage": { title: "कवरेज सक्रिय करें", desc: "डायनैमिक प्रीमियम देकर अपनी शिफ्ट सुरक्षा सक्रिय करें।" },
-  "Admin Approved": { title: "एडमिन अप्रूव्ड", desc: "शर्त पूरी होने पर क्लेम approval queue में जाता है और फिर पेआउट होता है।" },
+  "Get Risk Assessment": { title: "जोखिम मूल्यांकन पाएं", desc: "AI मौसम, AQI और ट्रेंड देखकर आपका जोखिम स्तर तय करता है।" },
+  "Activate Weekly Plan": { title: "साप्ताहिक प्लान सक्रिय करें", desc: "लो, मीडियम या हाई रिस्क प्लान चुनकर कवरेज शुरू करें।" },
+  "Auto Credit Payout": { title: "ऑटो पेआउट क्रेडिट", desc: "शर्त पूरी होते ही पेआउट अपने आप वॉलेट में क्रेडिट होता है।" },
 };
 
 const LandingPage = () => {
@@ -97,15 +97,15 @@ const LandingPage = () => {
             </h1>
 
             <p className="text-lg text-gray-300 max-w-2xl">
-              AI-powered income protection for delivery riders facing weather disruptions.
+              Proactive parametric insurance for delivery riders who depend on consistent daily earnings.
             </p>
             <p className="text-sm text-gray-400 max-w-xl">
-              Helping riders in cities like Mumbai where heavy rain can directly impact daily earnings.
+              Example persona: Rahul (Ahmedabad), earning ₹800–₹1200/day and ₹6000–₹8000/week.
             </p>
             <div className="inline-flex items-center gap-2 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-3 text-cyan-100 text-sm font-medium shadow-[0_0_28px_rgba(34,211,238,0.18)]">
-              <CloudRain className="w-4 h-4" /> "Up to 30% income loss during heavy rain days"
+              <CloudRain className="w-4 h-4" /> "One disruption day can cause 15%–25% weekly income loss"
             </div>
-            <p className="text-xs text-cyan-100/90 font-medium">💡 Covers up to 30% income loss during high-risk weather conditions</p>
+            <p className="text-xs text-cyan-100/90 font-medium">💡 SmartShift auto-detects disruption and credits payout instantly</p>
 
             <div className="flex items-center gap-3 flex-wrap">
               <Link to={session ? dashboardPath : "/register"}>
@@ -119,7 +119,7 @@ const LandingPage = () => {
                 </Button>
               </Link>
             </div>
-            <p className="text-xs text-gray-300">Trusted by delivery partners in high-risk cities</p>
+            <p className="text-xs text-gray-300">Built for Zomato and Swiggy riders in urban high-risk zones</p>
           </motion.div>
 
           <motion.div
@@ -139,22 +139,59 @@ const LandingPage = () => {
         <div className="container mx-auto max-w-4xl">
           <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="rounded-2xl border border-blue-500/20 bg-slate-900/35 p-6 md:p-8">
             <h2 className="font-display text-2xl md:text-3xl font-bold text-white mb-2">Who is this for?</h2>
-            <p className="text-sm text-gray-400 mb-5">Delivery riders working in cities where disruption risk stays high across the week.</p>
+            <p className="text-sm text-gray-400 mb-5">Urban food-delivery riders fully dependent on daily working hours for weekly income stability.</p>
             <div className="space-y-3">
               <div className="flex items-center gap-3 text-gray-200">
                 <CheckCircle2 className="w-4 h-4 text-cyan-300" />
-                <span>Heavy rainfall disrupts daily work</span>
+                <span>Daily earnings typically range between ₹800 and ₹1200</span>
               </div>
               <div className="flex items-center gap-3 text-gray-200">
                 <CheckCircle2 className="w-4 h-4 text-cyan-300" />
-                <span>Flooded roads stop deliveries</span>
+                <span>Weekly earnings usually range between ₹6000 and ₹8000</span>
               </div>
               <div className="flex items-center gap-3 text-gray-200">
                 <CheckCircle2 className="w-4 h-4 text-cyan-300" />
-                <span>Earnings become unpredictable</span>
+                <span>Even one disruption day can reduce weekly income by 15%–25%</span>
               </div>
             </div>
           </motion.div>
+        </div>
+      </section>
+
+      <section className="py-16 px-4">
+        <div className="container mx-auto max-w-5xl">
+          <div className="text-center mb-8">
+            <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-2">Weekly Pricing Model</h2>
+            <p className="text-sm text-gray-400">Affordable weekly plans aligned with gig-worker earning cycles.</p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-4">
+            {[
+              { risk: "Low Risk", premium: "₹49/week", coverage: "Up to ₹800" },
+              { risk: "Medium Risk", premium: "₹79/week", coverage: "Up to ₹1200" },
+              { risk: "High Risk", premium: "₹109/week", coverage: "Up to ₹1600" },
+            ].map((item) => (
+              <div key={item.risk} className="rounded-xl border border-blue-500/20 bg-slate-900/40 p-5">
+                <p className="text-xs uppercase tracking-wide text-blue-200/80">{item.risk}</p>
+                <p className="mt-2 text-2xl font-bold text-white">{item.premium}</p>
+                <p className="mt-1 text-sm text-gray-300">{item.coverage}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="py-16 px-4 bg-gradient-to-b from-transparent via-blue-500/5 to-transparent">
+        <div className="container mx-auto max-w-5xl">
+          <div className="text-center mb-8">
+            <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-2">Parametric Trigger System</h2>
+            <p className="text-sm text-gray-400">Claims trigger automatically when threshold breach is detected with low activity.</p>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-cyan-500/25 bg-slate-900/40 p-5 text-sm text-gray-200">🌧 Heavy Rain: Rainfall &gt; 20 mm/hr</div>
+            <div className="rounded-xl border border-cyan-500/25 bg-slate-900/40 p-5 text-sm text-gray-200">🌡 Heatwave: Temperature &gt; 40°C</div>
+            <div className="rounded-xl border border-cyan-500/25 bg-slate-900/40 p-5 text-sm text-gray-200">🌫 Pollution: AQI &gt; 300</div>
+            <div className="rounded-xl border border-cyan-500/25 bg-slate-900/40 p-5 text-sm text-gray-200">🌊 Flood Risk: Rainfall &gt; 100 mm/day</div>
+          </div>
         </div>
       </section>
 

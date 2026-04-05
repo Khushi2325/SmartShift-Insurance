@@ -118,7 +118,7 @@ const RegisterPage = () => {
           <p className="text-primary-foreground/70 max-w-sm mx-auto">{tx(language, "Get instant income protection powered by AI. Sign up in under a minute.", "AI से संचालित तुरंत आय सुरक्षा पाएँ। एक मिनट से भी कम समय में साइन अप करें।")}</p>
           <div className="mt-6 space-y-2 text-sm text-primary-foreground/80 max-w-xs mx-auto text-left">
             <p>⚡ Real-time risk detection</p>
-            <p>⚡ AI + admin review before payout</p>
+            <p>⚡ AI auto-claim + instant wallet credit</p>
             <p>⚡ Zero paperwork</p>
           </div>
         </div>

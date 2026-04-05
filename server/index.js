@@ -114,11 +114,29 @@ const generateRiskForecast = (currentData) => {
   return forecast;
 };
 
-const calculatePremium = (riskScore) => Math.round(20 + clamp(Number(riskScore || 0), 0, 1) * 50);
+const calculatePremium = (riskScore) => {
+  const score = Number(riskScore || 0);
+  if (score > 0.7) return 109;
+  if (score > 0.4) return 79;
+  return 49;
+};
 
-const checkForClaim = ({ rain, activity }) => {
-  if (Number(rain || 0) > 50 && Number(activity || 0) < 30) {
-    return { triggered: true, payout: 300, reason: "Heavy rain disruption" };
+const checkForClaim = ({ rain, activity, aqi, temperature }) => {
+  const rainValue = Number(rain || 0);
+  const aqiValue = Number(aqi || 0);
+  const temperatureValue = Number(temperature || 0);
+  const activityValue = Number(activity || 0);
+
+  const disruptionDetected = rainValue > 20 || temperatureValue > 40 || aqiValue > 300 || rainValue > 100;
+
+  if (disruptionDetected && activityValue < 30) {
+    let reason = "Income disruption detected";
+    if (rainValue > 100) reason = "Flood risk disruption";
+    else if (rainValue > 20) reason = "Heavy rain disruption";
+    else if (temperatureValue > 40) reason = "Heatwave disruption";
+    else if (aqiValue > 300) reason = "Pollution disruption";
+
+    return { triggered: true, payout: 200, reason };
   }
 
   return { triggered: false };
@@ -445,7 +463,7 @@ app.post("/api/risk/insights", (req, res) => {
   const risk = calculateRisk({ rainProbability, aqi, temperature });
   const forecast = generateRiskForecast({ rainProbability, aqi, temperature });
   const premium = calculatePremium(risk.riskScore);
-  const claim = checkForClaim({ rain, activity });
+  const claim = checkForClaim({ rain, activity, aqi, temperature });
 
   return res.json({
     risk,

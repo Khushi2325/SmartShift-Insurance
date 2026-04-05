@@ -55,27 +55,27 @@ const fallbackTrend: TrendPoint[] = [
 ];
 
 const planCatalog = [
-  { id: "day-shield", name: "Day Shield", window: "8:00 AM - 8:00 PM", premium: "₹45", payout: "₹500", triggers: "Rain > 50mm", bestFor: "Daytime riders" },
-  { id: "rush-hour-cover", name: "Rush Hour Cover", window: "6:00 AM - 11:00 AM", premium: "₹25", payout: "₹300", triggers: "AQI > 300", bestFor: "Peak hour earnings" },
-  { id: "night-safety", name: "Night Safety", window: "6:00 PM - 11:00 PM", premium: "₹30", payout: "₹350", triggers: "Rain OR Heat > 40°C", bestFor: "Night deliveries" },
+  { id: "day-shield", name: "Low Risk Plan", window: "Weekly protection cycle", premium: "₹49", payout: "₹800", triggers: "Rainfall > 20 mm/hr", bestFor: "Lower disruption cities" },
+  { id: "rush-hour-cover", name: "Medium Risk Plan", window: "Weekly protection cycle", premium: "₹79", payout: "₹1200", triggers: "AQI > 300", bestFor: "Moderate disruption cities" },
+  { id: "night-safety", name: "High Risk Plan", window: "Weekly protection cycle", premium: "₹109", payout: "₹1600", triggers: "Heatwave > 40°C or Flood risk", bestFor: "High disruption cities" },
 ];
 
 const planNameHindi: Record<string, string> = {
-  "Day Shield": "डे शील्ड",
-  "Rush Hour Cover": "रश आवर कवर",
-  "Night Safety": "नाइट सेफ्टी",
+  "Low Risk Plan": "लो रिस्क प्लान",
+  "Medium Risk Plan": "मीडियम रिस्क प्लान",
+  "High Risk Plan": "हाई रिस्क प्लान",
 };
 
 const planTriggerHindi: Record<string, string> = {
-  "Rain > 50mm": "बारिश > 50mm",
+  "Rainfall > 20 mm/hr": "बारिश > 20 mm/hr",
   "AQI > 300": "AQI > 300",
-  "Rain OR Heat > 40°C": "बारिश या तापमान > 40°C",
+  "Heatwave > 40°C or Flood risk": "तापमान > 40°C या बाढ़ जोखिम",
 };
 
 const planBestForHindi: Record<string, string> = {
-  "Daytime riders": "दिन में काम करने वाले राइडर्स",
-  "Peak hour earnings": "पीक आवर कमाई",
-  "Night deliveries": "रात की डिलीवरी",
+  "Lower disruption cities": "कम व्यवधान वाले शहर",
+  "Moderate disruption cities": "मध्यम व्यवधान वाले शहर",
+  "High disruption cities": "उच्च व्यवधान वाले शहर",
 };
 
 const cityConditions: Record<string, { rain: string; rainMm: number; rainProbability: number; aqi: number; temp: string; risk: number }> = {
@@ -114,9 +114,9 @@ const parseMoney = (value: string) => Number(value.replace(/[^0-9.]/g, ""));
 const inferPlanIdFromPolicy = (policy: { plan_id?: string | null; coverage_amount?: number } | null) => {
   if (!policy) return null;
   if (policy.plan_id && policy.plan_id !== "unknown") return policy.plan_id;
-  if (policy.coverage_amount === 500) return "day-shield";
-  if (policy.coverage_amount === 300) return "rush-hour-cover";
-  if (policy.coverage_amount === 350) return "night-safety";
+  if (policy.coverage_amount === 800 || policy.coverage_amount === 500) return "day-shield";
+  if (policy.coverage_amount === 1200 || policy.coverage_amount === 300) return "rush-hour-cover";
+  if (policy.coverage_amount === 1600 || policy.coverage_amount === 350) return "night-safety";
   return null;
 };
 
@@ -339,20 +339,25 @@ const WorkerDashboard = () => {
   );
 
   const riskLevel = demoState.riskLevel;
-  const recommendedPlanId = riskLevel === "HIGH" ? "day-shield" : riskLevel === "MEDIUM" ? "rush-hour-cover" : "night-safety";
+  const recommendedPlanId = riskLevel === "HIGH" ? "night-safety" : riskLevel === "MEDIUM" ? "rush-hour-cover" : "day-shield";
   const realtimeRiskLevel = rainImpactAssessment.riskLevel;
   const estimatedActivity = clamp(Math.round(100 - currentCondition.rainProbability - currentCondition.rainMm * 0.8), 10, 100);
   const noOrdersFor30Min = estimatedActivity < 30;
-  const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 500;
-  const triggerReasons = [
-    currentCondition.rainMm > 50 ? "Rain" : null,
-    noOrdersFor30Min ? "Low Activity" : null,
+  const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 800;
+  const environmentalTriggers = [
+    currentCondition.rainMm > 100 ? "Flood Risk" : null,
+    currentCondition.rainMm > 20 ? "Heavy Rain" : null,
+    currentTemp > 40 ? "Heatwave" : null,
     currentCondition.aqi > 300 ? "Pollution" : null,
   ].filter(Boolean) as string[];
-  const shouldTriggerClaim = currentCondition.rainMm > 50 && noOrdersFor30Min && policyActive;
-  const claimTriggered = triggerReasons.length >= 2;
+  const triggerReasons = [
+    ...environmentalTriggers,
+    noOrdersFor30Min ? "Low Activity" : null,
+  ].filter(Boolean) as string[];
+  const shouldTriggerClaim = policyActive && noOrdersFor30Min && environmentalTriggers.length > 0;
+  const claimTriggered = shouldTriggerClaim;
   const autoClaimTriggered = policyActive && (shouldTriggerClaim || claimTriggered);
-  const rainTriggerState: "ACTIVE" | "SAFE" = currentCondition.rainMm > 50 ? "ACTIVE" : "SAFE";
+  const rainTriggerState: "ACTIVE" | "SAFE" = currentCondition.rainMm > 20 ? "ACTIVE" : "SAFE";
   const aqiTriggerState: "ACTIVE" | "SAFE" = currentCondition.aqi > 300 ? "ACTIVE" : "SAFE";
   const zoneTriggerState: "ACTIVE" | "SAFE" = noOrdersFor30Min ? "ACTIVE" : "SAFE";
   const platformTriggerState: "MEDIUM" | "SAFE" = isWeatherLoading ? "MEDIUM" : "SAFE";
@@ -364,7 +369,8 @@ const WorkerDashboard = () => {
   const triggeredBy = triggerReasons.join(" + ") || "No active disruption chain";
   const claimStatus = latestClaim?.status || "pending";
   const claimStatusLabel = claimStatus === "approved" ? "Approved" : claimStatus === "rejected" ? "Rejected" : "Pending";
-  const claimAmount = Number(latestClaim?.amount || Math.min(300, coverageLimit));
+  const projectedPayout = Math.min(Math.round(coverageLimit * 0.25), coverageLimit);
+  const claimAmount = Number(latestClaim?.amount || projectedPayout);
   const claimTriggersLabel = latestClaim?.triggers?.length ? latestClaim.triggers.join(" + ") : triggeredBy;
   const claimVisualState: "idle" | "triggered" | "processing" | "credited" | "rejected" = claimStatus === "approved"
     ? "credited"
@@ -376,7 +382,7 @@ const WorkerDashboard = () => {
           ? "triggered"
           : "idle";
   const liveStatusMessage = claimVisualState === "credited"
-    ? "✅ ₹300 credited successfully"
+    ? `✅ ₹${claimAmount} credited successfully`
     : claimVisualState === "processing"
       ? "⚡ Disruption detected → Claim processing..."
       : "No disruption detected";
@@ -393,9 +399,9 @@ const WorkerDashboard = () => {
     if (entries.length >= 3) return entries;
 
     return [
-      { text: "+ ₹500 Rain Payout", positive: true },
-      { text: "+ ₹300 AQI Payout", positive: true },
-      { text: "- ₹45 Insurance Premium", positive: false },
+      { text: "+ ₹800 Rain Payout", positive: true },
+      { text: "+ ₹1200 AQI Payout", positive: true },
+      { text: "- ₹49 Insurance Premium", positive: false },
     ];
   }, [demoState.transactions]);
 
@@ -430,13 +436,6 @@ const WorkerDashboard = () => {
       return new Date(tx.createdAt).getTime() >= weekAgo;
     });
   }, [demoState.transactions]);
-
-  const weeklyPremiumBreakdown = useMemo(() => calculateWeeklyPremiumBreakdown({
-    riskScore: rainImpactAssessment.riskScore,
-    rainProbability: currentCondition.rainProbability,
-    aqi: currentCondition.aqi,
-    claimFreeThisWeek,
-  }), [claimFreeThisWeek, currentCondition.aqi, currentCondition.rainProbability, rainImpactAssessment.riskScore]);
 
   const totalPayouts = useMemo(
     () => demoState.transactions
@@ -492,7 +491,7 @@ const WorkerDashboard = () => {
     const plan = planCatalog.find((item) => item.id === planId);
     if (!plan) return;
 
-    const expected = demoState.weeklyPremium;
+    const expected = parseMoney(plan.premium);
 
     const next = {
       ...user,
@@ -503,13 +502,14 @@ const WorkerDashboard = () => {
     setUser(next);
     setCoverageDetails({
       planId,
-      endsAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     });
     setPaymentPlanId(null);
     setUpiId("");
     setIsProcessing(false);
 
     const updatedDemo = recordPremiumPayment(next, expected, plan.name);
+    updatedDemo.weeklyPremium = expected;
     setDemoState(updatedDemo);
 
     try {
@@ -636,7 +636,7 @@ const WorkerDashboard = () => {
       return;
     }
 
-    void initiateRazorpay(planId, demoState.weeklyPremium);
+    void initiateRazorpay(planId, parseMoney(plan.premium));
   };
 
   useEffect(() => {
@@ -828,8 +828,9 @@ const WorkerDashboard = () => {
       aqi: currentCondition.aqi,
       claimFreeThisWeek,
     }).finalPremium;
-    if (derived.riskLevel !== demoState.riskLevel || premium !== demoState.weeklyPremium) {
-      const next = { ...demoState, riskLevel: derived.riskLevel, weeklyPremium: premium };
+    const nextPremium = user.policyActive ? demoState.weeklyPremium : premium;
+    if (derived.riskLevel !== demoState.riskLevel || nextPremium !== demoState.weeklyPremium) {
+      const next = { ...demoState, riskLevel: derived.riskLevel, weeklyPremium: nextPremium };
       setDemoState(next);
       saveWorkerDemoState(user, next);
     }
@@ -861,7 +862,7 @@ const WorkerDashboard = () => {
         toast.warning("⚠️ Claim flagged for review — will be processed manually");
       }
 
-      const payout = Math.min(300, coverageLimit);
+      const payout = Math.min(Math.round(coverageLimit * 0.25), coverageLimit);
 
       try {
         const response = await createClaimLifecycle({
@@ -885,7 +886,7 @@ const WorkerDashboard = () => {
           return next;
         });
 
-        toast.success("💸 ₹300 credited due to rain disruption");
+        toast.success(`💸 ₹${approved.claim.amount} credited due to detected disruption`);
       } catch {
         toast.error("Unable to create claim right now");
       }
@@ -1086,7 +1087,8 @@ const WorkerDashboard = () => {
               <MapPin className="w-3.5 h-3.5" /> {displayCity} | {formattedDate}
             </p>
             <p className="text-sm text-muted-foreground mt-2">Delivery Partner: {deliveryPartner}</p>
-            <p className="text-sm text-muted-foreground mt-1">{tx(language, "💰 Avg Earnings: ₹600/day", "💰 औसत कमाई: ₹600/दिन")}</p>
+            <p className="text-sm text-muted-foreground mt-1">{tx(language, "💰 Daily Earnings: ₹800–₹1200", "💰 दैनिक कमाई: ₹800–₹1200")}</p>
+            <p className="text-sm text-muted-foreground mt-1">{tx(language, "📅 Weekly Earnings: ₹6000–₹8000", "📅 साप्ताहिक कमाई: ₹6000–₹8000")}</p>
             <p className="text-sm text-foreground mt-2 font-medium">Your Profile: {personaProfile}</p>
             <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5"><CloudRain className="w-3.5 h-3.5" /> Your Work Environment: {environmentLabel}</p>
           </div>
@@ -1175,7 +1177,10 @@ const WorkerDashboard = () => {
                 </div>
 
                 <div className="mt-4 rounded-xl border border-border/60 bg-black/15 p-4 text-sm space-y-2">
-                  <p><span className="text-muted-foreground">🌧 Rain Trigger:</span> <span className={`font-semibold ${currentCondition.rainMm > 50 ? "text-red-300" : "text-foreground"}`}>{currentCondition.rainMm > 50 ? "ACTIVE" : "SAFE"}</span></p>
+                  <p><span className="text-muted-foreground">🌧 Rain Trigger (&gt;20 mm/hr):</span> <span className={`font-semibold ${currentCondition.rainMm > 20 ? "text-red-300" : "text-foreground"}`}>{currentCondition.rainMm > 20 ? "ACTIVE" : "SAFE"}</span></p>
+                  <p><span className="text-muted-foreground">🌊 Flood Trigger (&gt;100 mm/day):</span> <span className={`font-semibold ${currentCondition.rainMm > 100 ? "text-red-300" : "text-foreground"}`}>{currentCondition.rainMm > 100 ? "ACTIVE" : "SAFE"}</span></p>
+                  <p><span className="text-muted-foreground">🌡 Heatwave Trigger (&gt;40°C):</span> <span className={`font-semibold ${currentTemp > 40 ? "text-red-300" : "text-foreground"}`}>{currentTemp > 40 ? "ACTIVE" : "SAFE"}</span></p>
+                  <p><span className="text-muted-foreground">🌫 Pollution Trigger (AQI &gt; 300):</span> <span className={`font-semibold ${currentCondition.aqi > 300 ? "text-red-300" : "text-foreground"}`}>{currentCondition.aqi > 300 ? "ACTIVE" : "SAFE"}</span></p>
                   <p><span className="text-muted-foreground">📉 Activity Drop:</span> <span className={`font-semibold ${noOrdersFor30Min ? "text-red-300" : "text-foreground"}`}>{noOrdersFor30Min ? "DETECTED" : "NORMAL"}</span></p>
                   <p><span className="text-muted-foreground">🧠 AI Decision:</span> <span className={`font-semibold ${claimTriggered ? "text-amber-300" : "text-foreground"}`}>{claimTriggered ? "Income Loss Confirmed" : "Monitoring"}</span></p>
                   <p><span className="text-muted-foreground">📄 Claim Status:</span> <span className={`font-semibold ${claimStatus === "approved" ? "text-emerald-300" : claimStatus === "rejected" ? "text-red-300" : "text-amber-300"}`}>{claimStatus === "approved" ? "Auto-Created" : claimStatus === "rejected" ? "Not Eligible" : claimTriggered ? "Auto-Created" : "No disruption detected"}</span></p>
@@ -1183,9 +1188,9 @@ const WorkerDashboard = () => {
                     <span className="text-muted-foreground">💸 Payout:</span>{" "}
                     <span className={`font-semibold ${claimStatus === "approved" ? "text-emerald-300" : claimStatus === "rejected" ? "text-red-300" : "text-amber-300"}`}>
                       {claimStatus === "pending" && claimTriggered
-                        ? "₹300 Processing..."
+                        ? `₹${claimAmount} Processing...`
                         : claimStatus === "approved"
-                          ? "₹300 Credited"
+                          ? `₹${claimAmount} Credited`
                           : "₹0"}
                     </span>
                   </p>
@@ -1290,8 +1295,10 @@ const WorkerDashboard = () => {
                         </div>
                         <div className="space-y-1 text-xs mb-3">
                           <div className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="text-foreground">{plan.window}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground">Premium</span><span className="text-foreground">₹{weeklyPremiumBreakdown.finalPremium}/week</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Premium</span><span className="text-foreground">{plan.premium}/week</span></div>
                           <div className="flex justify-between"><span className="text-muted-foreground">Payout</span><span className="text-foreground">{plan.payout}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Auto Trigger</span><span className="text-foreground text-right">{tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</span></div>
+                          <div className="flex justify-between"><span className="text-muted-foreground">Best For</span><span className="text-foreground text-right">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</span></div>
                         </div>
                         {selected ? (
                           <Button className="w-full gap-2" variant="secondary"><Wallet className="w-4 h-4" /> Selected</Button>

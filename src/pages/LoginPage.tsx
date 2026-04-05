@@ -66,11 +66,11 @@ const LoginPage = () => {
         const activePolicy = portal.activePolicy;
         const activePlanId = activePolicy?.plan_id && activePolicy.plan_id !== "unknown"
           ? activePolicy.plan_id
-          : activePolicy?.coverage_amount === 500
+          : activePolicy?.coverage_amount === 800
             ? "day-shield"
-            : activePolicy?.coverage_amount === 300
+            : activePolicy?.coverage_amount === 1200
               ? "rush-hour-cover"
-              : activePolicy?.coverage_amount === 350
+              : activePolicy?.coverage_amount === 1600
                 ? "night-safety"
                 : null;
 
@@ -134,7 +134,7 @@ const LoginPage = () => {
           <p className="text-primary-foreground/70 max-w-sm mx-auto">{tx(language, "Access your dashboard, view your coverage status, and manage your protection.", "अपना डैशबोर्ड देखें, कवरेज स्टेटस जांचें और सुरक्षा मैनेज करें।")}</p>
           <div className="mt-6 space-y-2 text-sm text-primary-foreground/80 max-w-xs mx-auto text-left">
             <p>⚡ Real-time risk detection</p>
-            <p>⚡ AI auto-claim + instant payout</p>
+            <p>⚡ AI auto-claim + instant wallet credit</p>
             <p>⚡ Zero paperwork</p>
           </div>
         </div>
