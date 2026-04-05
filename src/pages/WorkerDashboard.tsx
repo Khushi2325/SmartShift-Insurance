@@ -111,6 +111,12 @@ const getRainLabel = (rainMm: number) => {
 };
 
 const parseMoney = (value: string) => Number(value.replace(/[^0-9.]/g, ""));
+const isSimulationOnlyPayout = (tx: { kind: string; label: string; status: string }) => (
+  tx.kind === "PAYOUT"
+  && tx.status === "Credited"
+  && tx.label.toLowerCase().includes("wallet not credited")
+);
+
 const inferPlanIdFromPolicy = (policy: { plan_id?: string | null; coverage_amount?: number } | null) => {
   if (!policy) return null;
   if (policy.plan_id && policy.plan_id !== "unknown") return policy.plan_id;
@@ -247,6 +253,8 @@ const WorkerDashboard = () => {
   const [workerId, setWorkerId] = useState<number | null>(null);
   const [latestClaim, setLatestClaim] = useState<ClaimLifecycle | null>(null);
   const [lastAutoClaimKey, setLastAutoClaimKey] = useState("");
+  const [testTriggerNonce, setTestTriggerNonce] = useState(0);
+  const [testModeEnabled, setTestModeEnabled] = useState(false);
   const [fraudFlags, setFraudFlags] = useState<{ type: string; severity: string; message: string }[]>([]);
   const [claimBlocked, setClaimBlocked] = useState(false);
   const [coverageDetails, setCoverageDetails] = useState<{ planId: string | null; endsAt: string | null }>({
@@ -311,7 +319,7 @@ const WorkerDashboard = () => {
 
   const approvedPayoutsTotal = useMemo(
     () => demoState.transactions
-      .filter((tx) => tx.kind === "PAYOUT" && tx.status === "Credited")
+      .filter((tx) => tx.kind === "PAYOUT" && tx.status === "Credited" && !isSimulationOnlyPayout(tx))
       .reduce((sum, tx) => sum + tx.amount, 0),
     [demoState.transactions],
   );
@@ -341,24 +349,31 @@ const WorkerDashboard = () => {
   const riskLevel = demoState.riskLevel;
   const recommendedPlanId = riskLevel === "HIGH" ? "night-safety" : riskLevel === "MEDIUM" ? "rush-hour-cover" : "day-shield";
   const realtimeRiskLevel = rainImpactAssessment.riskLevel;
+  const canUseTestMode = import.meta.env.DEV;
+  const forceTriggerForTesting = canUseTestMode && testModeEnabled;
   const estimatedActivity = clamp(Math.round(100 - currentCondition.rainProbability - currentCondition.rainMm * 0.8), 10, 100);
-  const noOrdersFor30Min = estimatedActivity < 30;
+  const noOrdersFor30Min = forceTriggerForTesting ? true : estimatedActivity < 30;
   const coverageLimit = activePlan ? parseMoney(activePlan.payout) : 800;
+  const heavyRainDetected = forceTriggerForTesting ? true : currentCondition.rainMm > 20;
+  const floodRiskDetected = forceTriggerForTesting ? true : currentCondition.rainMm > 100;
+  const heatwaveDetected = forceTriggerForTesting ? true : currentTemp > 40;
+  const pollutionDetected = forceTriggerForTesting ? true : currentCondition.aqi > 300;
   const environmentalTriggers = [
-    currentCondition.rainMm > 100 ? "Flood Risk" : null,
-    currentCondition.rainMm > 20 ? "Heavy Rain" : null,
-    currentTemp > 40 ? "Heatwave" : null,
-    currentCondition.aqi > 300 ? "Pollution" : null,
+    floodRiskDetected ? "Flood Risk" : null,
+    heavyRainDetected ? "Heavy Rain" : null,
+    heatwaveDetected ? "Heatwave" : null,
+    pollutionDetected ? "Pollution" : null,
   ].filter(Boolean) as string[];
   const triggerReasons = [
     ...environmentalTriggers,
     noOrdersFor30Min ? "Low Activity" : null,
+    forceTriggerForTesting ? "Test Mode" : null,
   ].filter(Boolean) as string[];
   const shouldTriggerClaim = policyActive && noOrdersFor30Min && environmentalTriggers.length > 0;
   const claimTriggered = shouldTriggerClaim;
   const autoClaimTriggered = policyActive && (shouldTriggerClaim || claimTriggered);
-  const rainTriggerState: "ACTIVE" | "SAFE" = currentCondition.rainMm > 20 ? "ACTIVE" : "SAFE";
-  const aqiTriggerState: "ACTIVE" | "SAFE" = currentCondition.aqi > 300 ? "ACTIVE" : "SAFE";
+  const rainTriggerState: "ACTIVE" | "SAFE" = heavyRainDetected ? "ACTIVE" : "SAFE";
+  const aqiTriggerState: "ACTIVE" | "SAFE" = pollutionDetected ? "ACTIVE" : "SAFE";
   const zoneTriggerState: "ACTIVE" | "SAFE" = noOrdersFor30Min ? "ACTIVE" : "SAFE";
   const platformTriggerState: "MEDIUM" | "SAFE" = isWeatherLoading ? "MEDIUM" : "SAFE";
   const trafficTriggerState: "ACTIVE" | "MEDIUM" | "SAFE" = rainImpactAssessment.riskScore > 0.75
@@ -387,14 +402,31 @@ const WorkerDashboard = () => {
       ? "⚡ Disruption detected → Claim processing..."
       : "No disruption detected";
 
+  const triggerAutoPayoutTest = () => {
+    if (!canUseTestMode) return;
+    if (!policyActive || !activePlan) {
+      toast.warning("Activate a weekly plan first to test auto payout.");
+      return;
+    }
+
+    setFraudFlags([]);
+    setClaimBlocked(false);
+    setTestModeEnabled(true);
+    setTestTriggerNonce(Date.now());
+    toast.info("Test mode armed. Auto payout trigger is being simulated now.");
+  };
+
   const walletImpactLines = useMemo(() => {
-    const entries = demoState.transactions.slice(0, 3).map((tx) => {
+    const entries = demoState.transactions
+      .filter((tx) => !isSimulationOnlyPayout(tx))
+      .slice(0, 3)
+      .map((tx) => {
       const sign = tx.kind === "PAYOUT" ? "+" : "-";
       const label = tx.kind === "PAYOUT"
         ? `${tx.eventType || "Risk"} Payout`
         : "Insurance Premium";
       return { text: `${sign} ₹${tx.amount} ${label}`, positive: tx.kind === "PAYOUT" };
-    });
+      });
 
     if (entries.length >= 3) return entries;
 
@@ -432,14 +464,14 @@ const WorkerDashboard = () => {
   const claimFreeThisWeek = useMemo(() => {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return !demoState.transactions.some((tx) => {
-      if (tx.kind !== "PAYOUT" || tx.status !== "Credited") return false;
+      if (tx.kind !== "PAYOUT" || tx.status !== "Credited" || isSimulationOnlyPayout(tx)) return false;
       return new Date(tx.createdAt).getTime() >= weekAgo;
     });
   }, [demoState.transactions]);
 
   const totalPayouts = useMemo(
     () => demoState.transactions
-      .filter((tx) => tx.kind === "PAYOUT" && tx.status === "Credited")
+      .filter((tx) => tx.kind === "PAYOUT" && tx.status === "Credited" && !isSimulationOnlyPayout(tx))
       .reduce((sum, tx) => sum + tx.amount, 0),
     [demoState.transactions],
   );
@@ -458,6 +490,12 @@ const WorkerDashboard = () => {
   };
 
   const runFraudCheck = async (): Promise<"APPROVE" | "REVIEW" | "BLOCK"> => {
+    if (forceTriggerForTesting) {
+      setFraudFlags([]);
+      setClaimBlocked(false);
+      return "APPROVE";
+    }
+
     try {
       const res = await fetch("/api/fraud/check", {
         method: "POST",
@@ -846,14 +884,63 @@ const WorkerDashboard = () => {
     if (!user || !workerId || !policyActive || !activePlan || !autoClaimTriggered) return;
 
     const claimWindow = new Date().toISOString().slice(0, 13);
-    const claimKey = `AUTO-${activePlan.id}-${claimWindow}-${triggeredBy}`;
+    const claimKey = forceTriggerForTesting
+      ? `AUTO-TEST-${activePlan.id}-${testTriggerNonce}-${triggeredBy}`
+      : `AUTO-${activePlan.id}-${claimWindow}-${triggeredBy}`;
     if (claimKey === lastAutoClaimKey) return;
 
     setLastAutoClaimKey(claimKey);
     void (async () => {
+      if (forceTriggerForTesting) {
+        const now = new Date().toISOString();
+        const simulatedAmount = Math.min(Math.round(coverageLimit * 0.25), coverageLimit);
+
+        setLatestClaim({
+          id: -Date.now(),
+          userId: workerId,
+          triggers: triggerReasons,
+          status: "approved",
+          amount: simulatedAmount,
+          createdAt: now,
+        });
+
+        setDemoState((current) => {
+          const next = {
+            ...current,
+            lastEvent: {
+              eventType: "Rain" as const,
+              amount: simulatedAmount,
+              status: "Credited" as const,
+              timestamp: now,
+            },
+            transactions: [
+              {
+                id: `SIM-PAYOUT-${Date.now()}`,
+                kind: "PAYOUT" as const,
+                amount: simulatedAmount,
+                status: "Credited" as const,
+                label: "Test auto payout simulated (wallet not credited)",
+                eventType: "Rain" as const,
+                createdAt: now,
+              },
+              ...current.transactions,
+            ].slice(0, 20),
+          };
+          saveWorkerDemoState(user, next);
+          return next;
+        });
+
+        setTestModeEnabled(false);
+        toast.success(`Test payout simulated: ₹${simulatedAmount} (wallet unchanged)`);
+        return;
+      }
+
       const recommendation = await runFraudCheck();
 
       if (recommendation === "BLOCK") {
+        if (forceTriggerForTesting) {
+          setTestModeEnabled(false);
+        }
         toast.error("⚠️ Claim blocked — suspicious activity detected");
         return;
       }
@@ -875,6 +962,9 @@ const WorkerDashboard = () => {
         const approved = await approveClaimLifecycle(response.claim.id);
         setLatestClaim(approved.claim);
         setPayoutCelebration({ amount: approved.claim.amount, walletBalance: approved.walletBalance });
+        if (forceTriggerForTesting) {
+          setTestModeEnabled(false);
+        }
 
         const portal = await fetchWorkerPortalState(user.email);
         setDemoState((current) => {
@@ -888,10 +978,13 @@ const WorkerDashboard = () => {
 
         toast.success(`💸 ₹${approved.claim.amount} credited due to detected disruption`);
       } catch {
+        if (forceTriggerForTesting) {
+          setTestModeEnabled(false);
+        }
         toast.error("Unable to create claim right now");
       }
     })();
-  }, [activePlan, autoClaimTriggered, coverageLimit, lastAutoClaimKey, policyActive, triggerReasons, triggeredBy, user, workerId]);
+  }, [activePlan, autoClaimTriggered, coverageLimit, forceTriggerForTesting, lastAutoClaimKey, policyActive, testTriggerNonce, triggerReasons, triggeredBy, user, workerId]);
 
   useEffect(() => {
     if (!user?.email) return;
@@ -1207,6 +1300,24 @@ const WorkerDashboard = () => {
                     Refresh claim
                   </Button>
                 </div>
+
+                {canUseTestMode && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="w-full sm:w-auto"
+                      onClick={triggerAutoPayoutTest}
+                    >
+                      Trigger test auto payout
+                    </Button>
+                    {testModeEnabled && (
+                      <span className="inline-flex items-center rounded-md border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-200">
+                        Test mode active
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -1425,7 +1536,9 @@ const WorkerDashboard = () => {
                       </span>
                       <div className={`text-xs font-medium ${tx.status === "Credited" ? "text-accent" : tx.kind === "PAYOUT" ? "text-amber-300" : "text-muted-foreground"}`}>
                         {tx.status === "Credited" ? (
-                          <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Credited</span>
+                          isSimulationOnlyPayout(tx)
+                            ? <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Simulated (wallet unchanged)</span>
+                            : <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Credited</span>
                         ) : tx.kind === "PAYOUT" ? (
                           <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Processing</span>
                         ) : (
