@@ -328,6 +328,9 @@ const WorkerDashboard = () => {
     () => (coverageDetails.planId ? planCatalog.find((plan) => plan.id === coverageDetails.planId) || null : activePlan),
     [activePlan, coverageDetails.planId],
   );
+  const effectiveWeeklyPremium = resolvedCoveragePlan
+    ? parseMoney(resolvedCoveragePlan.premium)
+    : demoState.weeklyPremium;
 
   const coverageDaysRemaining = useMemo(() => {
     if (!coverageDetails.endsAt) return null;
@@ -384,7 +387,7 @@ const WorkerDashboard = () => {
   const triggeredBy = triggerReasons.join(" + ") || "No active disruption chain";
   const claimStatus = latestClaim?.status || "pending";
   const claimStatusLabel = claimStatus === "approved" ? "Approved" : claimStatus === "rejected" ? "Rejected" : "Pending";
-  const projectedPayout = Math.min(Math.round(coverageLimit * 0.25), coverageLimit);
+  const projectedPayout = coverageLimit;
   const claimAmount = Number(latestClaim?.amount || projectedPayout);
   const claimTriggersLabel = latestClaim?.triggers?.length ? latestClaim.triggers.join(" + ") : triggeredBy;
   const claimVisualState: "idle" | "triggered" | "processing" | "credited" | "rejected" = claimStatus === "approved"
@@ -875,6 +878,18 @@ const WorkerDashboard = () => {
   }, [claimFreeThisWeek, currentCondition.aqi, currentCondition.rainProbability, currentTemp, demoState, user]);
 
   useEffect(() => {
+    if (!user?.policyActive || !resolvedCoveragePlan) return;
+    const planPremium = parseMoney(resolvedCoveragePlan.premium);
+
+    setDemoState((current) => {
+      if (current.weeklyPremium === planPremium) return current;
+      const next = { ...current, weeklyPremium: planPremium };
+      saveWorkerDemoState(user, next);
+      return next;
+    });
+  }, [resolvedCoveragePlan?.id, user?.email, user?.policyActive]);
+
+  useEffect(() => {
     if (!payoutCelebration) return;
     const timeoutId = window.setTimeout(() => setPayoutCelebration(null), 3500);
     return () => window.clearTimeout(timeoutId);
@@ -893,7 +908,7 @@ const WorkerDashboard = () => {
     void (async () => {
       if (forceTriggerForTesting) {
         const now = new Date().toISOString();
-        const simulatedAmount = Math.min(Math.round(coverageLimit * 0.25), coverageLimit);
+        const simulatedAmount = coverageLimit;
 
         setLatestClaim({
           id: -Date.now(),
@@ -949,7 +964,7 @@ const WorkerDashboard = () => {
         toast.warning("⚠️ Claim flagged for review — will be processed manually");
       }
 
-      const payout = Math.min(Math.round(coverageLimit * 0.25), coverageLimit);
+      const payout = coverageLimit;
 
       try {
         const response = await createClaimLifecycle({
@@ -1251,7 +1266,7 @@ const WorkerDashboard = () => {
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between"><span className="text-muted-foreground">Plan</span><span className="text-foreground font-medium">{tx(language, activePlan.name, planNameHindi[activePlan.name] || activePlan.name)}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Coverage</span><span className="text-foreground font-medium">{activePlan.window}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Weekly Premium</span><span className="text-foreground font-semibold">₹{demoState.weeklyPremium}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Weekly Premium</span><span className="text-foreground font-semibold">₹{effectiveWeeklyPremium}</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="text-accent font-medium">Monitoring ✅</span></div>
                   </div>
                 ) : (

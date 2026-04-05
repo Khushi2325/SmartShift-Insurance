@@ -508,22 +508,16 @@ export const checkForClaim = ({
   activity,
   aqi = 0,
   temperature = 0,
-  expectedIncome = 600,
   coverageLimit = 800,
-  lossPercentage = 0.25,
 }: {
   rain: number;
   activity: number;
   aqi?: number;
   temperature?: number;
-  expectedIncome?: number;
   coverageLimit?: number;
-  lossPercentage?: number;
 }) => {
   const hasDisruption = rain > 20 || temperature > 40 || aqi > 300 || rain > 100;
   if (hasDisruption && activity < 30) {
-    const loss = expectedIncome * lossPercentage;
-
     let reason = "Income disruption detected";
     if (rain > 100) reason = "Flood risk disruption";
     else if (rain > 20) reason = "Heavy rain disruption";
@@ -532,7 +526,7 @@ export const checkForClaim = ({
 
     return {
       triggered: true,
-      payout: Math.min(loss, coverageLimit),
+      payout: coverageLimit,
       reason,
     };
   }

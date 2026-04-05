@@ -121,7 +121,7 @@ const calculatePremium = (riskScore) => {
   return 49;
 };
 
-const checkForClaim = ({ rain, activity, aqi, temperature }) => {
+const checkForClaim = ({ rain, activity, aqi, temperature, coverageLimit = 800 }) => {
   const rainValue = Number(rain || 0);
   const aqiValue = Number(aqi || 0);
   const temperatureValue = Number(temperature || 0);
@@ -136,7 +136,7 @@ const checkForClaim = ({ rain, activity, aqi, temperature }) => {
     else if (temperatureValue > 40) reason = "Heatwave disruption";
     else if (aqiValue > 300) reason = "Pollution disruption";
 
-    return { triggered: true, payout: 200, reason };
+    return { triggered: true, payout: Number(coverageLimit || 800), reason };
   }
 
   return { triggered: false };
@@ -459,11 +459,11 @@ app.get("/api/claims/latest", async (req, res) => {
 });
 
 app.post("/api/risk/insights", (req, res) => {
-  const { rainProbability, aqi, temperature, rain, activity } = req.body || {};
+  const { rainProbability, aqi, temperature, rain, activity, coverageLimit } = req.body || {};
   const risk = calculateRisk({ rainProbability, aqi, temperature });
   const forecast = generateRiskForecast({ rainProbability, aqi, temperature });
   const premium = calculatePremium(risk.riskScore);
-  const claim = checkForClaim({ rain, activity, aqi, temperature });
+  const claim = checkForClaim({ rain, activity, aqi, temperature, coverageLimit });
 
   return res.json({
     risk,
