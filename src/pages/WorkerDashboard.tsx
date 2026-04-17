@@ -1501,6 +1501,100 @@ const WorkerDashboard = () => {
           </div>
         </motion.div>
 
+        {/* INSURANCE PLANS - TOP SECTION */}
+        <section ref={plansSectionRef} className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-lg font-semibold text-foreground">Coverage Plans</h2>
+            <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-400/50">Instant</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {planCatalog.map((plan) => {
+              const selected = coverageDetails.planId === plan.id;
+              const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
+              
+              // Dynamic trigger status based on real conditions
+              let triggerStatus = { isActive: false, display: "" };
+              if (plan.id === "day-shield") {
+                triggerStatus.isActive = currentCondition.rainMm > 20;
+                triggerStatus.display = "Rainfall";
+              } else if (plan.id === "rush-hour-cover") {
+                triggerStatus.isActive = currentCondition.aqi > 300;
+                triggerStatus.display = "Air Quality";
+              } else if (plan.id === "night-safety") {
+                triggerStatus.isActive = currentTemp > 40;
+                triggerStatus.display = "Temperature";
+              }
+              
+              return (
+                <motion.div
+                  key={plan.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.05 }}
+                  className={`relative rounded-lg p-3 transition-all duration-300 border text-sm ${
+                    selected
+                      ? "bg-accent/15 border-accent/60 shadow-[0_0_15px_rgba(251,191,36,0.1)]"
+                      : "bg-slate-800/30 border-slate-700/40 hover:border-slate-600/60"
+                  }`}
+                >
+                  {recommended && !selected && (
+                    <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
+                      <span className="px-2 py-0.5 text-xs rounded-full bg-amber-500/80 text-slate-900 font-bold">Best</span>
+                    </div>
+                  )}
+                  {selected && (
+                    <div className="absolute top-2 right-2 bg-emerald-500/40 rounded-full p-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-300" />
+                    </div>
+                  )}
+                  
+                  <div className="space-y-2">
+                    <div>
+                      <h4 className="font-semibold text-xs text-foreground">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
+                      <div className="flex items-baseline gap-1 mt-0.5">
+                        <span className="text-xl font-bold text-emerald-400">{plan.premium}</span>
+                        <span className="text-xs text-muted-foreground">/week</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-0.5 text-xs border-t border-slate-600/30 pt-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Payout</span>
+                        <span className="font-semibold text-foreground">{plan.payout}</span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Trigger</span>
+                        <div className="flex items-center gap-1">
+                          <div className={`w-1.5 h-1.5 rounded-full ${triggerStatus.isActive ? 'bg-red-400' : 'bg-slate-500'}`} />
+                          <span className={`font-medium ${triggerStatus.isActive ? 'text-red-300' : 'text-slate-400'}`}>
+                            {triggerStatus.display}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 mt-2 border-t border-slate-600/30">
+                    {selected ? (
+                      <Button className="w-full gap-2 h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white" disabled>
+                        <CheckCircle2 className="w-3 h-3" /> Active
+                      </Button>
+                    ) : (
+                      <Button
+                        className="w-full gap-2 h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                        onClick={() => startPlanPayment(plan.id)}
+                      >
+                        <Wallet className="w-3 h-3" /> Activate
+                      </Button>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </section>
+
         <div className="space-y-8">
           <section className="space-y-4 pt-2">
             <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">🔥 Your Coverage</h2>
@@ -1756,121 +1850,6 @@ const WorkerDashboard = () => {
               <div className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
                 <EarningsOptimization />
               </div>
-            </div>
-          </section>
-
-          {/* INSURANCE PLANS SECTION - MIDDLE VISIBILITY */}
-          <section ref={plansSectionRef} className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-lg md:text-xl font-semibold text-foreground tracking-tight">Coverage Plans</h2>
-              <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-400/50">Instant Activation</span>
-            </div>
-            {user?.salary && (
-              <div className="mb-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-xs">
-                <p className="text-blue-200">Recommended: <span className="font-semibold text-blue-300">{user.salary < 40000 ? 'Low Risk Plan' : user.salary <= 80000 ? 'Medium Risk Plan' : 'Premium Risk Plan'}</span> based on ₹{Number(user.salary).toLocaleString('en-IN')} salary</p>
-              </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {planCatalog.map((plan) => {
-                const selected = coverageDetails.planId === plan.id;
-                const inPayment = paymentPlanId === plan.id;
-                const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
-                
-                // Dynamic trigger status based on real conditions
-                let triggerStatus = { isActive: false, display: "", current: "", threshold: "" };
-                if (plan.id === "day-shield") {
-                  triggerStatus.isActive = currentCondition.rainMm > 20;
-                  triggerStatus.display = "Rainfall";
-                  triggerStatus.current = `${currentCondition.rainMm}mm`;
-                  triggerStatus.threshold = "> 20mm";
-                } else if (plan.id === "rush-hour-cover") {
-                  triggerStatus.isActive = currentCondition.aqi > 300;
-                  triggerStatus.display = "Air Quality";
-                  triggerStatus.current = `AQI ${currentCondition.aqi}`;
-                  triggerStatus.threshold = "> 300";
-                } else if (plan.id === "night-safety") {
-                  triggerStatus.isActive = currentTemp > 40;
-                  triggerStatus.display = "Temperature";
-                  triggerStatus.current = `${currentCondition.temp}`;
-                  triggerStatus.threshold = "> 40°C";
-                }
-                
-                return (
-                  <motion.div
-                    key={plan.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 }}
-                    className={`relative rounded-xl p-4 transition-all duration-300 border ${
-                      selected
-                        ? "bg-accent/15 border-accent/60 shadow-[0_0_20px_rgba(251,191,36,0.15)]"
-                        : "bg-slate-800/30 border-slate-700/40 hover:border-slate-600/60"
-                    }`}
-                  >
-                    {recommended && !selected && (
-                      <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/80 text-slate-900 text-xs font-bold">Recommended</span>
-                      </div>
-                    )}
-                    {selected && (
-                      <div className="absolute top-2 right-2 bg-emerald-500/40 border border-emerald-400/60 rounded-full p-1">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-                      </div>
-                    )}
-                    
-                    <div className="space-y-3">
-                      <div>
-                        <h4 className="font-semibold text-sm text-foreground">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
-                        <div className="flex items-baseline gap-1 mt-1">
-                          <span className="text-2xl font-bold text-emerald-400">{plan.premium}</span>
-                          <span className="text-xs text-muted-foreground">/week</span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5 pt-2 border-t border-slate-600/30 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Payout</span>
-                          <span className="text-foreground font-semibold">{plan.payout}</span>
-                        </div>
-                        
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">Trigger</span>
-                          <div className="flex items-center gap-1">
-                            <div className={`w-1.5 h-1.5 rounded-full ${triggerStatus.isActive ? 'bg-red-400' : 'bg-slate-500'}`} />
-                            <span className={`text-right font-medium ${triggerStatus.isActive ? 'text-red-300' : 'text-slate-400'}`}>
-                              {triggerStatus.display}
-                            </span>
-                          </div>
-                        </div>
-                        
-                        <div className="text-xs text-slate-500 -mt-0.5 pl-3">
-                          {triggerStatus.current} ({triggerStatus.threshold})
-                        </div>
-                        
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Best For</span>
-                          <span className="text-foreground text-right">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-3 mt-3 border-t border-slate-600/30">
-                      {selected ? (
-                        <Button className="w-full gap-2 h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white" disabled>
-                          <CheckCircle2 className="w-3 h-3" /> Active
-                        </Button>
-                      ) : (
-                        <Button
-                          className="w-full gap-2 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
-                          onClick={() => startPlanPayment(plan.id)}
-                        >
-                          <Wallet className="w-3 h-3" /> Activate
-                        </Button>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              })}
             </div>
           </section>
 
