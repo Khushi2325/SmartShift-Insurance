@@ -1775,6 +1775,26 @@ const WorkerDashboard = () => {
                 const selected = coverageDetails.planId === plan.id;
                 const inPayment = paymentPlanId === plan.id;
                 const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
+                
+                // Dynamic trigger status based on real conditions
+                let triggerStatus = { isActive: false, display: "", current: "", threshold: "" };
+                if (plan.id === "day-shield") {
+                  triggerStatus.isActive = currentCondition.rainMm > 20;
+                  triggerStatus.display = "Rainfall";
+                  triggerStatus.current = `${currentCondition.rainMm}mm`;
+                  triggerStatus.threshold = "> 20mm";
+                } else if (plan.id === "rush-hour-cover") {
+                  triggerStatus.isActive = currentCondition.aqi > 300;
+                  triggerStatus.display = "Air Quality";
+                  triggerStatus.current = `AQI ${currentCondition.aqi}`;
+                  triggerStatus.threshold = "> 300";
+                } else if (plan.id === "night-safety") {
+                  triggerStatus.isActive = currentTemp > 40;
+                  triggerStatus.display = "Temperature";
+                  triggerStatus.current = `${currentCondition.temp}`;
+                  triggerStatus.threshold = "> 40°C";
+                }
+                
                 return (
                   <motion.div
                     key={plan.id}
@@ -1813,9 +1833,18 @@ const WorkerDashboard = () => {
                           <span className="text-foreground font-semibold">{plan.payout}</span>
                         </div>
                         
-                        <div className="flex justify-between">
+                        <div className="flex items-center justify-between">
                           <span className="text-muted-foreground">Trigger</span>
-                          <span className="text-foreground text-right">{tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</span>
+                          <div className="flex items-center gap-1">
+                            <div className={`w-1.5 h-1.5 rounded-full ${triggerStatus.isActive ? 'bg-red-400' : 'bg-slate-500'}`} />
+                            <span className={`text-right font-medium ${triggerStatus.isActive ? 'text-red-300' : 'text-slate-400'}`}>
+                              {triggerStatus.display}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <div className="text-xs text-slate-500 -mt-0.5 pl-3">
+                          {triggerStatus.current} ({triggerStatus.threshold})
                         </div>
                         
                         <div className="flex justify-between">
