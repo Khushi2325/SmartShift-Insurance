@@ -1778,7 +1778,7 @@ const WorkerDashboard = () => {
                 )}
                 <div className="grid md:grid-cols-1 xl:grid-cols-2 gap-4">
                   {planCatalog.map((plan) => {
-                    const selected = activePlan?.id === plan.id;
+                    const selected = coverageDetails.planId === plan.id;
                     const inPayment = paymentPlanId === plan.id;
                     // Use salary-based recommendation if salary is available, otherwise use risk-based
                     const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
