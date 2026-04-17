@@ -2173,6 +2173,93 @@ const pingRenderUrl = () => {
 const mlRouter = mlRoutes(dbPool);
 app.use("/api/ml", mlRouter);
 
+// ML Prediction Endpoint - Proxies to Python serverless function
+app.post("/api/ml/predict", async (req, res) => {
+  try {
+    const { rain, rain_prob, wind, temperature, aqi, traffic_delay, hour } = req.body || {};
+
+    // For local development, calculate directly
+    // For Vercel, this will call the Python function at /api/ml
+    const isDevelopment = process.env.NODE_ENV === "development" || !process.env.VERCEL;
+
+    if (isDevelopment) {
+      // Local prediction (direct calculation)
+      const riskProb = calculateLocalRiskProbability({
+        rain: rain || 0,
+        rain_prob: rain_prob || 0,
+        wind: wind || 0,
+        temperature: temperature || 25,
+        aqi: aqi || 100,
+        traffic_delay: traffic_delay || 0,
+        hour: hour || 12,
+      });
+
+      return res.json({
+        risk_probability: Math.round(riskProb * 1000) / 1000,
+        risk_level: riskProb < 0.3 ? "LOW" : riskProb < 0.6 ? "MEDIUM" : "HIGH",
+        confidence: "HIGH",
+        explanation: [{ factor: "Local Mode", value: "Active", status: "SAFE" }],
+        model: "Local Rule-Based Engine",
+      });
+    }
+
+    // Production: Call Vercel Python function
+    const mlResponse = await fetch(
+      `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000"}/api/ml`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rain: rain || 0,
+          rain_prob: rain_prob || 0,
+          wind: wind || 0,
+          temperature: temperature || 25,
+          aqi: aqi || 100,
+          traffic_delay: traffic_delay || 0,
+          hour: hour || 12,
+        }),
+      },
+    );
+
+    const prediction = await mlResponse.json();
+    return res.json(prediction);
+  } catch (error) {
+    console.error("ML prediction error:", error);
+    return res.status(500).json({ error: "ML prediction failed", message: error.message });
+  }
+});
+
+// Helper function for local risk calculation
+const calculateLocalRiskProbability = (features) => {
+  const rain = features.rain || 0;
+  const rainProb = features.rain_prob || 0;
+  const wind = features.wind || 0;
+  const temp = features.temperature || 25;
+  const aqi = features.aqi || 100;
+  const traffic = features.traffic_delay || 0;
+  const hour = features.hour || 12;
+
+  const rainNorm = Math.min(rain / 50, 1.0);
+  const rainProbNorm = rainProb / 100;
+  const windNorm = Math.min(wind / 30, 1.0);
+  const tempNorm = Math.max(0, Math.min((temp - 25) / 15, 1.0));
+  const aqiNorm = Math.min(aqi / 500, 1.0);
+  const trafficNorm = Math.min(traffic / 3, 1.0);
+
+  const hourMultiplier = [9, 10, 17, 18].includes(hour) ? 1.5 : 1.0;
+
+  const riskScore =
+    (0.35 * rainNorm +
+      0.15 * rainProbNorm +
+      0.1 * windNorm +
+      0.15 * tempNorm +
+      0.15 * aqiNorm +
+      0.1 * trafficNorm) *
+    hourMultiplier;
+
+  return 1 / (1 + Math.exp(-((riskScore - 0.5) * 5)));
+};
+
 // Start automated trigger checker (fires every 5 minutes)
 if (dbPool) {
   startTriggerChecker(dbPool, 5 * 60 * 1000);
