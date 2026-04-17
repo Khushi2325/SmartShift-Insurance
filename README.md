@@ -3,14 +3,14 @@
 
 <div align="center">
 
-![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
-![Phase](https://img.shields.io/badge/Phase-Phase%202%20Complete-green?style=flat-square)
+[![Status](...)](https://smartshift-insurance.vercel.app)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
+[![Phase](https://img.shields.io/badge/Phase-Phase%202%20Complete-green?style=flat-square)](https://docs.google.com/presentation/d/1SrW3faKLoC1EFEwi-cqMqWnMNfAo6tLB9LTgAcYqQYY/edit?usp=sharing)
 
 **Production-ready full-stack platform for parametric income protection**  
 *Real-time Weather + AQI Data | ML-Powered Risk Scoring | Automated Claims | Multi-Tenant Safe*
 
-[🎯 Live Platform](#-live-links) • [📖 Documentation](#-documentation) • [🚀 Quick Start](#-quick-start) • [🤖 AI Engine](#-ai-powered-risk-scoring) • [🔐 Security](#-security--best-practices)
+[🎯 Live Platform](#-live-links) • [🚀 Quick Start](#-quick-start) • [🤖 AI Engine](#-ai-powered-risk-scoring) • [🔐 Security](#-security--best-practices)
 
 </div>
 
@@ -20,13 +20,10 @@
 
 | Resource | Link |
 |----------|------|
-| **🎬 Pitch Deck** | [SmartShift Investor Presentation](https://docs.google.com/presentation/d/YOUR_DRIVE_ID/edit?usp=sharing) |
+| **🎬 Pitch Deck** | [SmartShift Investor Presentation](https://docs.google.com/presentation/d/1SrW3faKLoC1EFEwi-cqMqWnMNfAo6tLB9LTgAcYqQYY/edit?usp=sharing) |
 | **📹 Demo Video** | [5-Min Product Walkthrough](https://youtube.com/shorts/STcQlzhvcNg?si=SSPQCAYtFPSj0b_N) |
 | **🌐 Live App** | [https://smartshift-insurance.vercel.app](https://smartshift-insurance.vercel.app) |
-| **💾 Database** | [Neon PostgreSQL Console](https://console.neon.tech/) |
 | **📊 Repository** | [GitHub: SmartShift-Insurance](https://github.com/Khushi2325/SmartShift-Insurance) |
-
-> **⚠️ Note:** Update links with your actual Google Drive and YouTube URLs for final submission
 
 ---
 
@@ -172,17 +169,6 @@ curl http://localhost:8080/api/payment/health
 | `Login fails` | Check database connection; use demo account: `test@smartshift.local` / `test123` |
 
 ---
-
-## 🚀 Deployment
-
-- Worker and admin login modes
-- Dynamic risk scoring (rain, AQI, temperature)
-- Plan purchase and activation
-- Automatic claim trigger and wallet credit based on measurable disruption thresholds
-- Dashboard rehydration from backend on login and page load
-- AI-assisted risk scoring endpoint (`/api/ai/risk/assess`) with explainability output
-- External real-time data ingestion from Open-Meteo weather and air-quality APIs
-- Fraud checks and rule+model hybrid underwriting pipeline
 
 ## AI + Data Intelligence
 
