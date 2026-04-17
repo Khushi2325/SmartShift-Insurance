@@ -1,4 +1,4 @@
-# 🛡️ SmartShift Insurance
+# SmartShift Insurance
 ## AI-Powered Parametric Income Protection for Gig Workers
 
 <div align="center">
@@ -10,13 +10,13 @@
 **Production-ready full-stack platform for parametric income protection**  
 *Real-time Weather + AQI Data | ML-Powered Risk Scoring | Automated Claims | Multi-Tenant Safe*
 
-[🎯 Live Platform](#-live-links) • [🚀 Quick Start](#-quick-start-2-minutes) • [🤖 AI Engine](#-ai-powered-risk-scoring-engine) • [🔐 Security](#-security--best-practices)
+[ Live Platform](#-live-links) • [ Quick Start](#-quick-start-2-minutes) • [ AI Engine](#-ai-powered-risk-scoring-engine) • [ Security](#-security--best-practices)
 
 </div>
 
 ---
 
-## 🎯 Live Links
+## Live Links
 
 | Resource | Link |
 |----------|------|
@@ -27,7 +27,7 @@
 
 ---
 
-## ✨ Platform Overview
+## Platform Overview
 
 SmartShift is an **AI-assisted parametric insurance platform** that:
 
@@ -42,7 +42,7 @@ SmartShift is an **AI-assisted parametric insurance platform** that:
 
 ---
 
-## 🎯 Phase 2 Feedback Addressed
+## Phase 2 Feedback Addressed
 
 | Challenge | Our Solution |
 |-----------|--------------|
@@ -54,7 +54,7 @@ SmartShift is an **AI-assisted parametric insurance platform** that:
 
 ---
 
-## 📊 Tech Stack
+## Tech Stack
 
 ```
 Frontend          │  Backend           │  Database       │  Deployment
@@ -73,7 +73,7 @@ Frontend          │  Backend           │  Database       │  Deployment
 
 ---
 
-## ⚡ Quick Start (2 minutes)
+## Quick Start (2 minutes)
 
 ### Prerequisites
 ```bash
@@ -269,7 +269,7 @@ Expected:
 
 ---
 
-## 🚀 Deployment
+## Deployment
 
 ### Frontend Deployment (Vercel)
 
@@ -341,7 +341,7 @@ npm run db:apply
 
 ---
 
-## 🤖 AI-Powered Risk Scoring Engine
+## AI-Powered Risk Scoring Engine
 
 ### How It Works
 
@@ -499,7 +499,7 @@ If external APIs are down:
 
 ---
 
-## 🔐 Fraud Detection & Prevention
+## Fraud Detection & Prevention
 
 ### Layer 1: Rule-Based Detection
 
@@ -516,7 +516,7 @@ const fraudChecks = {
 
 **Example Alert:**
 ```
-🚨 Suspicious Claim Detected
+ Suspicious Claim Detected
 ├─ Worker filed 3 claims today (usually 0-1)
 ├─ Reported AQI: 450 vs API: 120 (mismatch)
 ├─ Claim: 2.5x worker's average payout
@@ -545,12 +545,12 @@ if anomaly_score > 0.7:
 **Claims Dashboard:**
 ```
 Claim #4521
-├─ Status: 🚨 Fraud Investigation
+├─ Status:  Fraud Investigation
 ├─ Risk Score: 78/100 (High)
 ├─ Flags:
-│  ├─ ⚠️ Duplicate claims (3/day)
-│  ├─ ⚠️ Weather mismatch
-│  └─ ⚠️ Unusual payout amount
+│  ├─  Duplicate claims (3/day)
+│  ├─  Weather mismatch
+│  └─  Unusual payout amount
 ├─ Evidence:
 │  ├─ Weather API Data: AQI 120
 │  ├─ Worker Report: AQI 450
@@ -580,13 +580,13 @@ CREATE POLICY multi_tenant_isolation ON policies
 ```
 
 **Security Impact:**
-- 🔒 Even if DB compromised, queries can't cross worker boundaries
-- 📋 All admin actions logged with username + timestamp
-- ✅ Compliance-ready for IRDAI regulations
+-  Even if DB compromised, queries can't cross worker boundaries
+-  All admin actions logged with username + timestamp
+-  Compliance-ready for IRDAI regulations
 
 ---
 
-## 📚 API Reference
+## API Reference
 
 ### Authentication Endpoints
 
@@ -676,19 +676,19 @@ curl -X POST http://localhost:8080/api/payment/verify \
 
 ---
 
-## 🔒 Security & Best Practices
+## Security & Best Practices
 
 ### Authentication
-- ✅ **Passwords:** Bcrypted with cost factor 12 (industry standard)
-- ✅ **JWT Tokens:** HS256, 7-day expiry, signed secrets
-- ✅ **Session Management:** localStorage (frontend) + server validation
-- ✅ **Rate Limiting:** Max 5 failed login attempts per IP (auto-block 15 mins)
+- **Passwords:** Bcrypted with cost factor 12 (industry standard)
+- **JWT Tokens:** HS256, 7-day expiry, signed secrets
+- **Session Management:** localStorage (frontend) + server validation
+- **Rate Limiting:** Max 5 failed login attempts per IP (auto-block 15 mins)
 
 ### Data Protection
-- ✅ **Database:** TLS/SSL enabled on Neon (in-transit encryption)
-- ✅ **Environment Secrets:** `.env` not committed (in `.gitignore`)
-- ✅ **API Keys:** Razorpay & Neon credentials environment-only
-- ✅ **Audit Logging:** All admin actions logged with timestamp + IP
+- **Database:** TLS/SSL enabled on Neon (in-transit encryption)
+- **Environment Secrets:** `.env` not committed (in `.gitignore`)
+- **API Keys:** Razorpay & Neon credentials environment-only
+- **Audit Logging:** All admin actions logged with timestamp + IP
 
 ### Before Production (Critical)
 
@@ -705,25 +705,25 @@ curl -X POST http://localhost:8080/api/payment/verify \
 
 ### Compliance Checklist
 
-- ✅ Data privacy: Row-level security prevents cross-worker access
-- ✅ Fraud prevention: Multi-layer detection + admin review
-- ✅ Audit trail: All decisions logged (claim approvals, denials, payouts)
-- ✅ Transparent pricing: Clear plan structure, no hidden fees
-- ⏳ IRDAI compliance: Partner with licensed insurer for production
-- ⏳ KYC/AML: Integrate identity verification service
+- Data privacy: Row-level security prevents cross-worker access
+- Fraud prevention: Multi-layer detection + admin review
+- Audit trail: All decisions logged (claim approvals, denials, payouts)
+- Transparent pricing: Clear plan structure, no hidden fees
+- IRDAI compliance: Partner with licensed insurer for production
+- KYC/AML: Integrate identity verification service
 
 ---
 
-## ✅ Features Checklist
+## Features Checklist
 
 ### Core Features
-- ✅ Worker registration + profile management
-- ✅ Admin login with separate dashboard
-- ✅ Plan selection (Low/Medium/Premium by salary)
-- ✅ Plan activation with Razorpay payment
-- ✅ Real-time risk scoring from external data
-- ✅ Automatic claim triggering on disruption
-- ✅ Wallet credit system + balance tracking
+- Worker registration + profile management
+- Admin login with separate dashboard
+- Plan selection (Low/Medium/Premium by salary)
+- Plan activation with Razorpay payment
+- Real-time risk scoring from external data
+- Automatic claim triggering on disruption
+- Wallet credit system + balance tracking
 
 ### AI/ML Features
 - ✅ Hybrid ML model (logistic regression-style)
