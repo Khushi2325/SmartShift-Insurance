@@ -1759,96 +1759,83 @@ const WorkerDashboard = () => {
             </div>
           </section>
 
-          {/* INSURANCE PLANS SECTION - PROMINENT & HIGH VISIBILITY */}
-          <section ref={plansSectionRef} className="space-y-4 pt-2">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="font-display text-2xl md:text-3xl font-bold text-foreground tracking-tight">🛡️ Choose Your Coverage Plan</h2>
-              <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-400/50">Activate Instantly</span>
+          {/* INSURANCE PLANS SECTION - MIDDLE VISIBILITY */}
+          <section ref={plansSectionRef} className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg md:text-xl font-semibold text-foreground tracking-tight">Coverage Plans</h2>
+              <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-400/50">Instant Activation</span>
             </div>
             {user?.salary && (
-              <div className="mb-4 p-4 rounded-xl bg-gradient-to-r from-blue-500/15 to-cyan-500/15 border border-blue-400/40 shadow-[0_0_20px_rgba(59,130,246,0.1)]">
-                <p className="text-sm font-semibold mb-1.5 text-blue-200">💡 Smart Recommendation Based on Your Salary</p>
-                <p className="text-sm text-blue-100">
-                  Your monthly salary is <span className="font-bold text-blue-300">₹{Number(user.salary).toLocaleString('en-IN')}</span>. We recommend the <span className="font-bold text-amber-300">{user.salary < 40000 ? 'Low Risk Plan' : user.salary <= 80000 ? 'Medium Risk Plan' : 'Premium Risk Plan'}</span> for optimal coverage.
-                </p>
+              <div className="mb-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-xs">
+                <p className="text-blue-200">Recommended: <span className="font-semibold text-blue-300">{user.salary < 40000 ? 'Low Risk Plan' : user.salary <= 80000 ? 'Medium Risk Plan' : 'Premium Risk Plan'}</span> based on ₹{Number(user.salary).toLocaleString('en-IN')} salary</p>
               </div>
             )}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {planCatalog.map((plan) => {
                 const selected = coverageDetails.planId === plan.id;
                 const inPayment = paymentPlanId === plan.id;
-                // Use salary-based recommendation if salary is available, otherwise use risk-based
                 const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
                 return (
                   <motion.div
                     key={plan.id}
-                    initial={{ opacity: 0, y: 20 }}
+                    initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1 }}
-                    className={`relative rounded-2xl p-6 transition-all duration-300 border-2 ${
+                    transition={{ delay: 0.05 }}
+                    className={`relative rounded-xl p-4 transition-all duration-300 border ${
                       selected
-                        ? "bg-gradient-to-br from-accent/20 to-accent/5 border-accent shadow-[0_0_30px_rgba(251,191,36,0.2)]"
-                        : "bg-gradient-to-br from-slate-800/40 to-slate-900/40 border-slate-700/50 hover:border-slate-600 hover:shadow-lg"
+                        ? "bg-accent/15 border-accent/60 shadow-[0_0_20px_rgba(251,191,36,0.15)]"
+                        : "bg-slate-800/30 border-slate-700/40 hover:border-slate-600/60"
                     }`}
                   >
-                    {recommended && (
-                      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-                        <span className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-900 text-xs font-bold shadow-lg">⭐ RECOMMENDED</span>
+                    {recommended && !selected && (
+                      <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/80 text-slate-900 text-xs font-bold">Recommended</span>
                       </div>
                     )}
                     {selected && (
-                      <div className="absolute top-4 right-4 bg-emerald-500/30 border border-emerald-400/60 rounded-full p-2 shadow-lg">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+                      <div className="absolute top-2 right-2 bg-emerald-500/40 border border-emerald-400/60 rounded-full p-1">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-300" />
                       </div>
                     )}
                     
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       <div>
-                        <h4 className="font-display text-xl font-bold text-foreground mb-2">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-3xl font-bold text-emerald-400">{plan.premium}</span>
+                        <h4 className="font-semibold text-sm text-foreground">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
+                        <div className="flex items-baseline gap-1 mt-1">
+                          <span className="text-2xl font-bold text-emerald-400">{plan.premium}</span>
                           <span className="text-xs text-muted-foreground">/week</span>
                         </div>
                       </div>
 
-                      <div className="space-y-2 pt-2 border-t border-slate-600/40">
-                        <div className="flex items-start gap-3">
-                          <div className="text-lg">💰</div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Payout Amount</p>
-                            <p className="text-lg font-bold text-foreground">{plan.payout}</p>
-                          </div>
+                      <div className="space-y-1.5 pt-2 border-t border-slate-600/30 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Payout</span>
+                          <span className="text-foreground font-semibold">{plan.payout}</span>
                         </div>
                         
-                        <div className="flex items-start gap-3">
-                          <div className="text-lg">🎯</div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Auto Trigger</p>
-                            <p className="text-xs text-foreground font-medium">{tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</p>
-                          </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Trigger</span>
+                          <span className="text-foreground text-right">{tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</span>
                         </div>
                         
-                        <div className="flex items-start gap-3">
-                          <div className="text-lg">✅</div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Best For</p>
-                            <p className="text-xs text-foreground font-medium">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</p>
-                          </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Best For</span>
+                          <span className="text-foreground text-right">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="pt-4 mt-4 border-t border-slate-600/40">
+                    <div className="pt-3 mt-3 border-t border-slate-600/30">
                       {selected ? (
-                        <Button className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white" disabled>
-                          <CheckCircle2 className="w-4 h-4" /> {tx(language, "Plan Active", "प्लान सक्रिय")}
+                        <Button className="w-full gap-2 h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white" disabled>
+                          <CheckCircle2 className="w-3 h-3" /> Active
                         </Button>
                       ) : (
                         <Button
-                          className="w-full gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-all"
+                          className="w-full gap-2 h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
                           onClick={() => startPlanPayment(plan.id)}
                         >
-                          <Wallet className="w-4 h-4" /> {tx(language, "Activate Plan", "प्लान सक्रिय करें")}
+                          <Wallet className="w-3 h-3" /> Activate
                         </Button>
                       )}
                     </div>
