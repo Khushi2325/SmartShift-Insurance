@@ -34,6 +34,12 @@ import {
   saveWorkerDemoState,
   saveRegisteredWorkerProfile,
 } from "@/lib/insuranceDemo";
+import { calculateRisk as calculateRiskEngine, type RiskFactors } from "@/lib/riskEngine";
+import { getAIRiskNarrative } from "@/lib/aiExplain";
+import { fetchLiveWeather, fetchLiveAQI, fetchHourlyForecast } from "@/lib/weatherApi";
+import { RiskExplainability } from "@/components/dashboard/RiskExplainability";
+import { DataSourceBadge } from "@/components/dashboard/DataSourceBadge";
+import { EarningsOptimization } from "@/components/dashboard/EarningsOptimization";
 
 type TrendPoint = { time: string; score: number; hour: number };
 type ShiftRecommendation = {
@@ -359,6 +365,13 @@ const WorkerDashboard = () => {
   const [aiqData, setAiqData] = useState<any>({ us_aqi: 100 });
   const [trafficData, setTrafficData] = useState<any>({ delay_ratio: 1.0, avg_speed: 60, condition: "Light" });
   const [loadingWeather, setLoadingWeather] = useState(false);
+  
+  // New AI/Explainability states
+  const [riskResult, setRiskResult] = useState<any>(null);
+  const [aiNarrative, setAiNarrative] = useState("");
+  const [forecast, setForecast] = useState<any[]>([]);
+  const [liveWeatherData, setLiveWeatherData] = useState<any>(null);
+  const [liveAqiData, setLiveAqiData] = useState<any>(null);
 
   const userName = toTitleCase(user?.name || tx(language, "Worker", "वर्कर"));
   const userCity = normalizeCityLabel(user?.city || "Mumbai"); // Default to Mumbai if no city set
@@ -1006,6 +1019,17 @@ const WorkerDashboard = () => {
     let cancelled = false;
     setLoadingWeather(true);
 
+    // Timeout failsafe — ensure loading state clears after 5 seconds
+    const timeoutId = window.setTimeout(() => {
+      if (!cancelled) {
+        console.warn("⏱️ Weather fetch timeout — using fallback data");
+        setWeatherData({ temperature_2m: 25, precipitation: 0, precipitation_probability: 0 });
+        setAiqData({ us_aqi: 100 });
+        setTrafficData({ delay_ratio: 1.0, avg_speed: 60, condition: "Light" });
+        setLoadingWeather(false);
+      }
+    }, 5000);
+
     const fetchWeatherData = async () => {
       try {
         console.log("🌤 Fetching weather for city:", userCity);
@@ -1021,7 +1045,7 @@ const WorkerDashboard = () => {
         });
 
         if (cancelled) return;
-        
+
         if (!res.ok) {
           console.error("Weather API error:", res.status);
           throw new Error(`API error: ${res.status}`);
@@ -1061,15 +1085,72 @@ const WorkerDashboard = () => {
         setAiqData({ us_aqi: 100 });
         setTrafficData({ delay_ratio: 1.0, avg_speed: 60, condition: "Light" });
       } finally {
-        if (!cancelled) setLoadingWeather(false);
+        if (!cancelled) {
+          window.clearTimeout(timeoutId);
+          setLoadingWeather(false);
+        }
       }
     };
 
     fetchWeatherData();
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
     };
   }, [userCity, user?.email]);
+
+  // Calculate AI risk model and get Claude narrative
+  useEffect(() => {
+    if (!userCity || !weatherData || !aiqData) return;
+
+    const calculateAiRisk = async () => {
+      try {
+        // Create risk factors from current data
+        const factors: RiskFactors = {
+          rainMm: weatherData.precipitation || 0,
+          aqiIndex: aiqData.us_aqi || 100,
+          tempCelsius: weatherData.temperature_2m || 25,
+          trafficDelayPercent: (trafficData.delay_ratio || 1.0) * 30,
+          hour: new Date().getHours(),
+          dayOfWeek: new Date().getDay(),
+        };
+
+        // Run risk engine
+        const result = calculateRiskEngine(factors);
+        setRiskResult(result);
+
+        // Get Claude AI narrative (non-blocking, can fail gracefully)
+        const narrative = await getAIRiskNarrative(
+          factors,
+          result,
+          userCity,
+          deliveryPartner || "Zomato"
+        );
+        setAiNarrative(narrative);
+      } catch (error) {
+        console.error("AI risk calculation error:", error);
+      }
+    };
+
+    calculateAiRisk();
+  }, [weatherData, aiqData, trafficData, userCity, deliveryPartner]);
+
+  // Fetch hourly forecast for earnings optimization
+  useEffect(() => {
+    if (!userCity) return;
+
+    const loadForecast = async () => {
+      try {
+        const hourlyData = await fetchHourlyForecast(userCity);
+        setForecast(hourlyData);
+      } catch (error) {
+        console.error("Forecast load error:", error);
+        setForecast([]);
+      }
+    };
+
+    loadForecast();
+  }, [userCity]);
 
   useEffect(() => {
     if (!user) return;
@@ -1664,6 +1745,27 @@ const WorkerDashboard = () => {
                 </div>
                 <PayoutStatusCard event={demoState.lastEvent} />
               </div>
+            </div>
+          </section>
+
+          {/* NEW: AI Risk Explainability and Data Sources */}
+          <section className="space-y-4 pt-2">
+            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">🤖 AI Risk Analysis</h2>
+            <div className="grid grid-cols-1 gap-6">
+              {riskResult && (
+                <RiskExplainability result={riskResult} aiNarrative={aiNarrative} />
+              )}
+              <DataSourceBadge 
+                weatherFetchedAt={liveWeatherData?.fetchedAt}
+                aqiFetchedAt={liveAqiData?.fetchedAt}
+              />
+            </div>
+          </section>
+
+          {/* NEW: AI Earnings Optimization */}
+          <section className="space-y-4 pt-2">
+            <div className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
+              <EarningsOptimization city={userCity} forecastData={forecast} />
             </div>
           </section>
 
