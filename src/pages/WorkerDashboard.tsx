@@ -38,8 +38,7 @@ import { calculateRisk as calculateRiskEngine, type RiskFactors } from "@/lib/ri
 import { getAIRiskNarrative } from "@/lib/aiExplain";
 import { fetchLiveWeather, fetchLiveAQI, fetchHourlyForecast } from "@/lib/weatherApi";
 import { RiskExplainability } from "@/components/dashboard/RiskExplainability";
-import { DataSourceBadge } from "@/components/dashboard/DataSourceBadge";
-import { EarningsOptimization } from "@/components/dashboard/EarningsOptimization";
+
 
 type TrendPoint = { time: string; score: number; hour: number };
 type ShiftRecommendation = {
@@ -1750,22 +1749,14 @@ const WorkerDashboard = () => {
 
           {/* NEW: AI Risk Explainability and Data Sources */}
           <section className="space-y-4 pt-2">
-            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">🤖 AI Risk Analysis</h2>
+            <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">Safety & Earnings</h2>
             <div className="grid grid-cols-1 gap-6">
               {riskResult && (
                 <RiskExplainability result={riskResult} aiNarrative={aiNarrative} />
               )}
-              <DataSourceBadge 
-                weatherFetchedAt={liveWeatherData?.fetchedAt}
-                aqiFetchedAt={liveAqiData?.fetchedAt}
-              />
-            </div>
-          </section>
-
-          {/* NEW: AI Earnings Optimization */}
-          <section className="space-y-4 pt-2">
-            <div className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
-              <EarningsOptimization city={userCity} forecastData={forecast} />
+              <div className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
+                <EarningsOptimization city={userCity} forecastData={forecast} />
+              </div>
             </div>
           </section>
 
