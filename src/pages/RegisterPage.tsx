@@ -50,7 +50,7 @@ const RegisterPage = () => {
       password,
       city: city.trim(),
       salary: Number(salary),
-      persona_type: "balanced", // Auto-detected dynamically from live conditions
+      persona_type: "normal",
       deliveryPartner,
       role: "worker",
       phone: "",

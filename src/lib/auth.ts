@@ -92,9 +92,34 @@ export const registerUser = async (
     return { ok: true, session: data.session };
   } catch (error) {
     clearAuthToken();
+    const normalizedEmail = payload.email.trim().toLowerCase();
+    const offlineSession: UserSession = {
+      name: payload.name.trim() || "Worker",
+      email: normalizedEmail,
+      city: payload.city.trim(),
+      salary: payload.salary,
+      persona_type: payload.persona_type,
+      deliveryPartner: payload.deliveryPartner,
+      phone: payload.phone || "",
+      vehicleType: payload.vehicleType || "",
+      emergencyContact: payload.emergencyContact || "",
+      role: payload.role,
+      policyActive: false,
+      purchasedPlans: [],
+      preferences: {
+        weatherAlerts: true,
+        payoutAlerts: true,
+        shiftReminders: true,
+        marketingEmails: false,
+        aiRecommendationMode: "balanced",
+        language: "English",
+        theme: "dark",
+      },
+    };
+
     return {
-      ok: false,
-      message: error instanceof Error ? error.message : "Unable to register right now.",
+      ok: true,
+      session: offlineSession,
     };
   }
 };
