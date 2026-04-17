@@ -10,7 +10,7 @@
 **Production-ready full-stack platform for parametric income protection**  
 *Real-time Weather + AQI Data | ML-Powered Risk Scoring | Automated Claims | Multi-Tenant Safe*
 
-[🎯 Live Platform](#-live-links) • [🚀 Quick Start](#-quick-start) • [🤖 AI Engine](#-ai-powered-risk-scoring) • [🔐 Security](#-security--best-practices)
+[🎯 Live Platform](#-live-links) • [🚀 Quick Start](#-quick-start-2-minutes) • [🤖 AI Engine](#-ai-powered-risk-scoring-engine) • [🔐 Security](#-security--best-practices)
 
 </div>
 
