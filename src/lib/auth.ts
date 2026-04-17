@@ -179,7 +179,7 @@ export const authenticateUser = async (
     
     // OFFLINE MODE: If DB is down, allow any password with email-based session
     const offlineSession: UserSession = {
-      name: normalizedEmail.split("@")[0],
+      name: "Worker",
       email: normalizedEmail,
       city: "Mumbai",
       salary: 30000,

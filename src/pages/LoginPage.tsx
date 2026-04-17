@@ -64,6 +64,10 @@ const LoginPage = () => {
 
         nextSession = {
           ...nextSession,
+          name: portal.worker?.name || nextSession.name,
+          city: portal.worker?.city || nextSession.city,
+          persona_type: portal.worker?.persona_type || nextSession.persona_type,
+          deliveryPartner: portal.worker?.delivery_partner || nextSession.deliveryPartner,
           policyActive: Boolean(activePolicy && String(activePolicy.status).toLowerCase() === "active"),
           purchasedPlans: activePlanId ? [activePlanId] : nextSession.purchasedPlans,
         };

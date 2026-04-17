@@ -652,8 +652,8 @@ const WorkerDashboard = () => {
   };
 
   const startPlanPayment = (planId: string) => {
-    // In offline/demo mode, directly activate the plan
-    activatePlan(planId);
+    // Always route through Razorpay so a plan becomes active only after payment verification.
+    handlePurchase(planId);
   };
 
   const activatePlan = async (planId: string) => {
@@ -1509,7 +1509,12 @@ const WorkerDashboard = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {planCatalog.map((plan) => {
-              const selected = coverageDetails.planId === plan.id;
+              // Only show as active if plan is verified in database with valid end date
+              const isActive = 
+                coverageDetails.planId === plan.id && 
+                coverageDetails.endsAt && 
+                new Date(coverageDetails.endsAt).getTime() > Date.now();
+              
               const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
               
               // Dynamic trigger status based on real conditions
@@ -1532,17 +1537,17 @@ const WorkerDashboard = () => {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.05 }}
                   className={`relative rounded-lg p-3 transition-all duration-300 border text-sm ${
-                    selected
+                    isActive
                       ? "bg-accent/15 border-accent/60 shadow-[0_0_15px_rgba(251,191,36,0.1)]"
                       : "bg-slate-800/30 border-slate-700/40 hover:border-slate-600/60"
                   }`}
                 >
-                  {recommended && !selected && (
+                  {recommended && !isActive && (
                     <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
                       <span className="px-2 py-0.5 text-xs rounded-full bg-amber-500/80 text-slate-900 font-bold">Best</span>
                     </div>
                   )}
-                  {selected && (
+                  {isActive && (
                     <div className="absolute top-2 right-2 bg-emerald-500/40 rounded-full p-1">
                       <CheckCircle2 className="w-3 h-3 text-emerald-300" />
                     </div>
@@ -1576,7 +1581,7 @@ const WorkerDashboard = () => {
                   </div>
 
                   <div className="pt-2 mt-2 border-t border-slate-600/30">
-                    {selected ? (
+                    {isActive ? (
                       <Button className="w-full gap-2 h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white" disabled>
                         <CheckCircle2 className="w-3 h-3" /> Active
                       </Button>
