@@ -1291,6 +1291,125 @@ app.post("/api/ai/risk/assess", async (req, res) => {
   }
 });
 
+// AI Risk Narrative — handles Claude API calls securely on backend
+app.post("/api/ai/risk/narrative", async (req, res) => {
+  try {
+    const { factors, riskResult, workerCity, deliveryPlatform } = req.body || {};
+    const claudeKey = process.env.CLAUDE_API_KEY;
+
+    if (!claudeKey) {
+      return res.json({ narrative: riskResult?.recommendation || "Unable to generate narrative" });
+    }
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": claudeKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 200,
+        messages: [
+          {
+            role: "user",
+            content: `You are a risk advisor for gig delivery workers in India. 
+Analyze this worker's situation and give a 2-sentence plain-English explanation of their risk today.
+Be specific and actionable. Use simple language.
+
+Worker: ${deliveryPlatform} rider in ${workerCity}
+Current conditions:
+- Rain: ${factors?.rainMm || 0}mm/hr
+- AQI: ${factors?.aqiIndex || 100}
+- Temperature: ${factors?.tempCelsius || 25}°C  
+- Traffic delay: ${factors?.trafficDelayPercent || 0}%
+- Time: ${factors?.hour || 12}:00
+
+Risk score: ${riskResult?.score || 0.5} (${riskResult?.level || "MEDIUM"})
+Top risk factor: ${riskResult?.explanation?.[0]?.factor || "Weather"}
+
+Give only the 2-sentence explanation, nothing else.`,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      return res.json({ narrative: riskResult?.recommendation || "Unable to generate narrative" });
+    }
+
+    const data = await response.json();
+    const narrative = data.content?.[0]?.text || riskResult?.recommendation || "Risk assessment generated";
+
+    return res.json({ narrative });
+  } catch (error) {
+    console.error("Claude narrative error:", error);
+    return res.json({ narrative: "Unable to generate narrative at this time" });
+  }
+});
+
+// Risk Forecast — returns hourly forecast for the next 8 hours
+app.post("/api/ai/risk/forecast", async (req, res) => {
+  try {
+    const { city } = req.body || {};
+
+    if (!city) {
+      return res.status(400).json({ error: "City required" });
+    }
+
+    const owmKey = process.env.OPENWEATHER_KEY;
+
+    if (!owmKey) {
+      // Return default forecast if no API key
+      return res.json({
+        forecast: Array.from({ length: 8 }, (_, i) => ({
+          hour: (new Date().getHours() + i * 3) % 24,
+          rainMm: 0,
+          tempCelsius: 28,
+          aqiIndex: 75,
+        })),
+      });
+    }
+
+    // Fetch forecast from OpenWeatherMap
+    const res2 = await fetch(
+      `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(city)},IN&units=metric&cnt=8&appid=${owmKey}`
+    );
+
+    if (!res2.ok) {
+      return res.json({
+        forecast: Array.from({ length: 8 }, (_, i) => ({
+          hour: (new Date().getHours() + i * 3) % 24,
+          rainMm: 0,
+          tempCelsius: 28,
+          aqiIndex: 75,
+        })),
+      });
+    }
+
+    const data = await res2.json();
+    const forecast = data.list.map((item) => ({
+      hour: new Date(item.dt * 1000).getHours(),
+      rainMm: item.rain?.["3h"] ? item.rain["3h"] / 3 : 0,
+      tempCelsius: Math.round(item.main.temp),
+      aqiIndex: 75, // AQI forecast needs premium API
+    }));
+
+    return res.json({ forecast });
+  } catch (error) {
+    console.error("Forecast error:", error);
+    return res.json({
+      forecast: Array.from({ length: 8 }, (_, i) => ({
+        hour: (new Date().getHours() + i * 3) % 24,
+        rainMm: 0,
+        tempCelsius: 28,
+        aqiIndex: 75,
+      })),
+    });
+  }
+});
+
 app.post("/api/db/workers/upsert", async (req, res) => {
   if (!requireDb(res)) return;
 
