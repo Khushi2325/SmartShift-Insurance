@@ -3,7 +3,7 @@
 
 <div align="center">
 
-[![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=flat-square)](https://smartshift-insurance.vercel.app)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=flat-square)](https://smart-shift-insurance.vercel.app)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![Phase](https://img.shields.io/badge/Phase-Phase%202%20Complete-green?style=flat-square)](https://docs.google.com/presentation/d/1SrW3faKLoC1EFEwi-cqMqWnMNfAo6tLB9LTgAcYqQYY/edit?usp=sharing)
 
