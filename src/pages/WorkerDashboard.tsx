@@ -38,6 +38,7 @@ import { calculateRisk as calculateRiskEngine, type RiskFactors } from "@/lib/ri
 import { getAIRiskNarrative } from "@/lib/aiExplain";
 import { fetchLiveWeather, fetchLiveAQI, fetchHourlyForecast } from "@/lib/weatherApi";
 import { RiskExplainability } from "@/components/dashboard/RiskExplainability";
+import { EarningsOptimization } from "@/components/dashboard/EarningsOptimization";
 
 
 type TrendPoint = { time: string; score: number; hour: number };
@@ -1755,7 +1756,7 @@ const WorkerDashboard = () => {
                 <RiskExplainability result={riskResult} aiNarrative={aiNarrative} />
               )}
               <div className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
-                <EarningsOptimization city={userCity} forecastData={forecast} />
+                <EarningsOptimization />
               </div>
             </div>
           </section>

@@ -629,14 +629,43 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  if (!requireDb(res)) return;
-
   const { email, password } = req.body || {};
   const normalizedEmail = normalizeEmail(email);
 
   if (!normalizedEmail || !password) {
     return res.status(400).json({ error: "email and password are required" });
   }
+
+  // FALLBACK TEST USER (for demo/testing when DB is down)
+  if (normalizedEmail === "test@smartshift.local" && password === "test123") {
+    const session = {
+      name: "Test User",
+      email: "test@smartshift.local",
+      city: "Mumbai",
+      persona_type: "normal",
+      deliveryPartner: "Zomato",
+      phone: "9876543210",
+      vehicleType: "2-Wheeler",
+      emergencyContact: "9876543211",
+      role: "worker",
+      policyActive: true,
+      purchasedPlans: ["day-shield"],
+      preferences: {
+        weatherAlerts: true,
+        payoutAlerts: true,
+        shiftReminders: true,
+        marketingEmails: false,
+        aiRecommendationMode: "balanced",
+        language: "English",
+        theme: "dark",
+      },
+      salary: 25000,
+    };
+    const token = jwt.sign({ workerId: 1, email: normalizedEmail, role: "worker" }, jwtSecret, { expiresIn: "24h" });
+    return res.json({ session, token });
+  }
+
+  if (!requireDb(res)) return;
 
   try {
     const result = await dbPool.query(
