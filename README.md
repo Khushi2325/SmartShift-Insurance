@@ -21,7 +21,7 @@
 | Resource | Link |
 |----------|------|
 | **🎬 Pitch Deck** | [SmartShift Investor Presentation](https://docs.google.com/presentation/d/YOUR_DRIVE_ID/edit?usp=sharing) |
-| **📹 Demo Video** | [5-Min Product Walkthrough](https://youtu.be/YOUR_VIDEO_ID) |
+| **📹 Demo Video** | [5-Min Product Walkthrough](https://youtube.com/shorts/STcQlzhvcNg?si=SSPQCAYtFPSj0b_N) |
 | **🌐 Live App** | [https://smartshift-insurance.vercel.app](https://smartshift-insurance.vercel.app) |
 | **💾 Database** | [Neon PostgreSQL Console](https://console.neon.tech/) |
 | **📊 Repository** | [GitHub: SmartShift-Insurance](https://github.com/Khushi2325/SmartShift-Insurance) |
