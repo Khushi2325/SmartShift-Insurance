@@ -652,10 +652,8 @@ const WorkerDashboard = () => {
   };
 
   const startPlanPayment = (planId: string) => {
-    setPaymentPlanId(planId);
-    setUpiId("");
-    setPaymentStatus("");
-    setIsProcessing(false);
+    // In offline/demo mode, directly activate the plan
+    activatePlan(planId);
   };
 
   const activatePlan = async (planId: string) => {
@@ -1798,22 +1796,9 @@ const WorkerDashboard = () => {
                           <div className="flex justify-between"><span className="text-muted-foreground">Best For</span><span className="text-foreground text-right">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</span></div>
                         </div>
                         {selected ? (
-                          <Button className="w-full gap-2" variant="secondary"><Wallet className="w-4 h-4" /> Selected</Button>
-                        ) : inPayment ? (
-                          <div className="space-y-2">
-                            <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs text-blue-400 text-center">
-                              💳 Enter UPI on Razorpay
-                            </div>
-                            <Button className="w-full" disabled={isProcessing} onClick={() => handlePurchase(plan.id)} variant="default">
-                              {isProcessing ? tx(language, "Processing...", "प्रोसेसिंग...") : "Open Payment"}
-                            </Button>
-                            <Button className="w-full" variant="outline" disabled={isProcessing} onClick={() => setPaymentPlanId(null)}>
-                              {tx(language, "Cancel", "रद्द करें")}
-                            </Button>
-                            {paymentStatus && <p className={`mt-1 text-xs text-center ${paymentStatus.includes("✅") || paymentStatus.includes("Successful") ? "text-green-600" : "text-orange-400"}`}>{paymentStatus}</p>}
-                          </div>
+                          <Button className="w-full gap-2" variant="secondary" disabled><CheckCircle2 className="w-4 h-4" /> {tx(language, "Plan Active", "प्लान सक्रिय")}</Button>
                         ) : (
-                          <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}><Wallet className="w-4 h-4" /> {tx(language, "Choose Plan", "प्लान चुनें")}</Button>
+                          <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}><Wallet className="w-4 h-4" /> {tx(language, "Activate Plan", "प्लान सक्रिय करें")}</Button>
                         )}
                       </div>
                     );
