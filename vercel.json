@@ -2,10 +2,6 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/ml.py",
-      "use": "@vercel/python"
-    },
-    {
       "src": "server/index.js",
       "use": "@vercel/node"
     },
@@ -16,10 +12,6 @@
     }
   ],
   "routes": [
-    {
-      "src": "/api/ml",
-      "dest": "api/ml.py"
-    },
     {
       "src": "/api/(.*)",
       "dest": "server/index.js"
@@ -36,5 +28,8 @@
       "src": "/(.*)",
       "dest": "index.html"
     }
-  ]
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
 }
