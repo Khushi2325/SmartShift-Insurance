@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Shield, Mail, Lock, User, ArrowRight, MapPin, CloudRain, Wind, Sun } from "lucide-react";
+import { Shield, Mail, Lock, User, ArrowRight, MapPin, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
 import { setSession } from "@/lib/session";
 import { registerUser, validateEmailAuthenticity } from "@/lib/auth";
-import { syncWorkerToDb } from "@/lib/dbApi";
 import { tx, useAppLanguage } from "@/lib/preferences";
 
 const RegisterPage = () => {
@@ -15,7 +14,7 @@ const RegisterPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [city, setCity] = useState("");
-  const [personaType, setPersonaType] = useState<"rain" | "pollution" | "normal">("rain");
+  const [salary, setSalary] = useState("");
   const [deliveryPartner, setDeliveryPartner] = useState<"Zomato" | "Swiggy" | "Amazon" | "Blinkit">("Zomato");
   const [error, setError] = useState("");
   const navigate = useNavigate();
@@ -40,12 +39,18 @@ const RegisterPage = () => {
       return;
     }
 
-    const registration = registerUser({
+    if (!salary.trim() || isNaN(Number(salary)) || Number(salary) <= 0) {
+      setError(tx(language, "Please enter a valid monthly salary.", "कृपया एक वैध मासिक वेतन दर्ज करें।"));
+      return;
+    }
+
+    const registration = await registerUser({
       name: name.trim(),
       email: email.trim().toLowerCase(),
       password,
       city: city.trim(),
-      persona_type: personaType,
+      salary: Number(salary),
+      persona_type: "balanced", // Auto-detected dynamically from live conditions
       deliveryPartner,
       role: "worker",
       phone: "",
@@ -58,42 +63,12 @@ const RegisterPage = () => {
       return;
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
-
-    setSession({
-      name: name.trim(),
-      email: normalizedEmail,
-      city: city.trim(),
-      persona_type: personaType,
-      deliveryPartner,
-      phone: "",
-      vehicleType: "",
-      emergencyContact: "",
-      role: "worker",
-      policyActive: false,
-      purchasedPlans: [],
-      preferences: {
-        weatherAlerts: true,
-        payoutAlerts: true,
-        shiftReminders: true,
-        marketingEmails: false,
-        aiRecommendationMode: "balanced",
-        language: "English",
-        theme: "dark",
-      },
-    });
-
-    try {
-      await syncWorkerToDb({
-        name: name.trim(),
-        email: normalizedEmail,
-        city: city.trim(),
-        persona_type: personaType,
-        delivery_partner: deliveryPartner,
-      });
-    } catch {
-      // Keep local registration working even if DB sync is temporarily unavailable.
+    if (!registration.session) {
+      setError(tx(language, "Unable to create session after registration.", "रजिस्ट्रेशन के बाद सेशन नहीं बन पाया।"));
+      return;
     }
+
+    setSession(registration.session);
 
     navigate("/dashboard");
   };
@@ -134,48 +109,35 @@ const RegisterPage = () => {
           <h1 className="font-display text-2xl font-bold mb-1 text-foreground">{tx(language, "Create Account", "खाता बनाएं")}</h1>
           <p className="text-muted-foreground text-sm mb-8">{tx(language, "Start protecting your income in minutes", "कुछ ही मिनटों में अपनी आय की सुरक्षा शुरू करें")}</p>
 
-          <form onSubmit={handleRegister} className="space-y-4">
+          <form onSubmit={handleRegister} className="space-y-5">
+            {/* Full Name */}
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder={tx(language, "Full name", "पूरा नाम")} value={name} onChange={e => setName(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "Full name", "पूरा नाम")} value={name} onChange={e => setName(e.target.value)} className="pl-10 h-11" required />
             </div>
+
+            {/* Email */}
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder={tx(language, "Email address", "ईमेल पता")} type="email" value={email} onChange={e => setEmail(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "Email address", "ईमेल पता")} type="email" value={email} onChange={e => setEmail(e.target.value)} className="pl-10 h-11" required />
             </div>
+
+            {/* City */}
             <div className="relative">
               <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder={tx(language, "City (e.g. Mumbai)", "शहर (जैसे मुंबई)")} value={city} onChange={e => setCity(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "City (e.g. Mumbai)", "शहर (जैसे मुंबई)")} value={city} onChange={e => setCity(e.target.value)} className="pl-10 h-11" required />
             </div>
-            <div className="rounded-lg border border-border/70 p-3 bg-card/50">
-              <p className="text-sm font-medium text-foreground mb-2">{tx(language, "Work Environment", "कार्य परिवेश")}</p>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPersonaType("rain")}
-                  className={`rounded-md border px-2 py-2 text-xs font-medium flex items-center justify-center gap-1 ${personaType === "rain" ? "border-primary bg-primary/10 text-primary" : "border-border/70 text-foreground"}`}
-                >
-                  <CloudRain className="w-3.5 h-3.5" /> Rain
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPersonaType("pollution")}
-                  className={`rounded-md border px-2 py-2 text-xs font-medium flex items-center justify-center gap-1 ${personaType === "pollution" ? "border-primary bg-primary/10 text-primary" : "border-border/70 text-foreground"}`}
-                >
-                  <Wind className="w-3.5 h-3.5" /> Pollution
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPersonaType("normal")}
-                  className={`rounded-md border px-2 py-2 text-xs font-medium flex items-center justify-center gap-1 ${personaType === "normal" ? "border-primary bg-primary/10 text-primary" : "border-border/70 text-foreground"}`}
-                >
-                  <Sun className="w-3.5 h-3.5" /> Normal
-                </button>
-              </div>
+
+            {/* Monthly Salary */}
+            <div className="relative">
+              <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input placeholder={tx(language, "Monthly Salary (₹)", "मासिक वेतन (₹)")} type="number" value={salary} onChange={e => setSalary(e.target.value)} className="pl-10 h-11" required />
             </div>
-            <div className="rounded-lg border border-border/70 p-3 bg-card/50">
-              <p className="text-sm font-medium text-foreground mb-2">Delivery Platform</p>
-              <div className="grid grid-cols-2 gap-2">
+
+            {/* Delivery Platform */}
+            <div className="rounded-lg border border-border/70 p-4 bg-card/50 backdrop-blur-sm">
+              <p className="text-sm font-semibold text-foreground mb-3">Select Delivery Platform</p>
+              <div className="grid grid-cols-2 gap-2.5">
                 {[
                   { label: "Zomato", icon: "🍽️" },
                   { label: "Swiggy", icon: "🛵" },
@@ -186,21 +148,33 @@ const RegisterPage = () => {
                     key={partner.label}
                     type="button"
                     onClick={() => setDeliveryPartner(partner.label as "Zomato" | "Swiggy" | "Amazon" | "Blinkit")}
-                    className={`rounded-md border px-2 py-2 text-xs font-medium flex items-center justify-center gap-1 ${deliveryPartner === partner.label ? "border-primary bg-primary/10 text-primary" : "border-border/70 text-foreground"}`}
+                    className={`rounded-md border py-2.5 px-3 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                      deliveryPartner === partner.label 
+                        ? "border-primary bg-primary/15 text-primary shadow-sm" 
+                        : "border-border/70 text-foreground hover:border-border bg-card/30"
+                    }`}
                   >
-                    <span>{partner.icon}</span>
+                    <span className="text-base">{partner.icon}</span>
                     <span>{partner.label}</span>
                   </button>
                 ))}
               </div>
             </div>
+
+            {/* Password */}
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder={tx(language, "Password", "पासवर्ड")} type="password" value={password} onChange={e => setPassword(e.target.value)} className="pl-10" required />
+              <Input placeholder={tx(language, "Password", "पासवर्ड")} type="password" value={password} onChange={e => setPassword(e.target.value)} className="pl-10 h-11" required />
             </div>
-            {error && <p className="text-sm text-risk-high">{error}</p>}
-            <Button type="submit" className="w-full gap-2">{tx(language, "Start Protection", "प्रोटेक्शन शुरू करें")} <ArrowRight className="w-4 h-4" /></Button>
-            <p className="text-xs text-muted-foreground text-center">🔒 No hidden charges • Weekly flexible plans</p>
+
+            {/* Error Message */}
+            {error && <p className="text-sm text-risk-high font-medium bg-risk-high/10 rounded-md p-3">{error}</p>}
+
+            {/* Submit Button */}
+            <Button type="submit" className="w-full h-11 gap-2 font-semibold">{tx(language, "Start Protection", "प्रोटेक्शन शुरू करें")} <ArrowRight className="w-4 h-4" /></Button>
+
+            {/* Security Note */}
+            <p className="text-xs text-muted-foreground text-center font-medium">🔒 No hidden charges • Weekly flexible plans</p>
           </form>
 
           <p className="text-sm text-muted-foreground text-center mt-6">

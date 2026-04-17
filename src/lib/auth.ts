@@ -5,6 +5,7 @@ export interface RegisteredUser {
   email: string;
   password: string;
   city: string;
+  salary: number;
   persona_type: "rain" | "pollution" | "normal";
   deliveryPartner: "Zomato" | "Swiggy" | "Amazon" | "Blinkit";
   phone?: string;
@@ -17,7 +18,7 @@ export interface RegisteredUser {
 export const ADMIN_DEMO_EMAIL = "admin@smartshift.local";
 export const ADMIN_DEMO_PASSWORD = "SmartShift@Admin2026";
 
-const USERS_KEY = "smartshift_users";
+const AUTH_TOKEN_KEY = "smartshift_auth_token";
 
 const disposableDomains = new Set([
   "mailinator.com",
@@ -29,19 +30,29 @@ const disposableDomains = new Set([
 
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-const getUsers = (): RegisteredUser[] => {
-  const raw = localStorage.getItem(USERS_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+const storeAuthToken = (token: string) => {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
 };
 
-const saveUsers = (users: RegisteredUser[]) => {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+const clearAuthToken = () => {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+};
+
+export const getAuthToken = () => localStorage.getItem(AUTH_TOKEN_KEY);
+
+const postJson = async <T>(url: string, payload: Record<string, unknown>): Promise<T> => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || data?.message || "Request failed");
+  }
+
+  return data as T;
 };
 
 export const validateEmailAuthenticity = (email: string): { valid: boolean; message?: string } => {
@@ -58,23 +69,40 @@ export const validateEmailAuthenticity = (email: string): { valid: boolean; mess
   return { valid: true };
 };
 
-export const registerUser = (payload: Omit<RegisteredUser, "createdAt">): { ok: boolean; message?: string } => {
-  const users = getUsers();
-  const normalizedEmail = payload.email.trim().toLowerCase();
-  const exists = users.some((user) => user.email.toLowerCase() === normalizedEmail);
-  if (exists) {
-    return { ok: false, message: "This email is already registered. Please log in." };
-  }
+export const registerUser = async (
+  payload: Omit<RegisteredUser, "createdAt">,
+): Promise<{ ok: boolean; message?: string; session?: UserSession }> => {
+  try {
+    const normalizedEmail = payload.email.trim().toLowerCase();
+    const data = await postJson<{ session: UserSession; token: string }>("/api/auth/register", {
+      name: payload.name,
+      email: normalizedEmail,
+      password: payload.password,
+      city: payload.city,
+      salary: payload.salary,
+      persona_type: payload.persona_type,
+      delivery_partner: payload.deliveryPartner,
+      role: payload.role,
+    });
 
-  users.push({ ...payload, email: normalizedEmail, createdAt: new Date().toISOString() });
-  saveUsers(users);
-  return { ok: true };
+    if (data.token) {
+      storeAuthToken(data.token);
+    }
+
+    return { ok: true, session: data.session };
+  } catch (error) {
+    clearAuthToken();
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Unable to register right now.",
+    };
+  }
 };
 
-export const authenticateUser = (
+export const authenticateUser = async (
   email: string,
   password: string,
-): { ok: boolean; message?: string; session?: UserSession } => {
+): Promise<{ ok: boolean; message?: string; session?: UserSession }> => {
   const normalizedEmail = email.trim().toLowerCase();
 
   if (normalizedEmail === ADMIN_DEMO_EMAIL && password === ADMIN_DEMO_PASSWORD) {
@@ -105,39 +133,41 @@ export const authenticateUser = (
     };
   }
 
-  const users = getUsers();
-  const user = users.find((item) => item.email.toLowerCase() === normalizedEmail);
-  if (!user) {
-    return { ok: false, message: "Account not found. Please sign up first." };
-  }
+  try {
+    const data = await postJson<{ session: UserSession; token: string }>("/api/auth/login", {
+      email: normalizedEmail,
+      password,
+    });
 
-  if (user.password !== password) {
-    return { ok: false, message: "Incorrect password." };
-  }
+    if (data.token) {
+      storeAuthToken(data.token);
+    }
 
-  return {
-    ok: true,
-    session: {
-      name: user.name,
-      email: user.email,
-      city: user.city,
-      persona_type: user.persona_type || "rain",
-      deliveryPartner: user.deliveryPartner || "Zomato",
-      phone: user.phone || "",
-      vehicleType: user.vehicleType || "",
-      emergencyContact: user.emergencyContact || "",
-      role: user.role,
-      policyActive: false,
-      purchasedPlans: [],
-      preferences: {
-        weatherAlerts: true,
-        payoutAlerts: true,
-        shiftReminders: true,
-        marketingEmails: false,
-        aiRecommendationMode: "balanced",
-        language: "English",
-        theme: "dark",
-      },
+    return { ok: true, session: data.session };
+  } catch (error) {
+    clearAuthToken();
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Unable to login.",
+    };
+  }
+};
+
+export const fetchAuthenticatedSession = async (): Promise<UserSession | null> => {
+  const token = getAuthToken();
+  if (!token) return null;
+
+  const response = await fetch("/api/auth/me", {
+    headers: {
+      Authorization: `Bearer ${token}`,
     },
-  };
+  });
+
+  if (!response.ok) {
+    clearAuthToken();
+    return null;
+  }
+
+  const data = await response.json().catch(() => null);
+  return data?.session || null;
 };

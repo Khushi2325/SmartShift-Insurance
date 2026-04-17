@@ -18,6 +18,8 @@ import {
   fetchUserProfile,
   fetchWorkerPortalState,
   approveClaimLifecycle,
+  fetchAiRiskAssessment,
+  syncLocationRiskToDb,
   syncInsurancePolicyToDb,
   syncRiskDataToDb,
   syncWorkerToDb,
@@ -92,7 +94,25 @@ const cityCoordinates: Record<string, { latitude: number; longitude: number }> =
   Chennai: { latitude: 13.0827, longitude: 80.2707 },
 };
 
-const defaultCondition = { rain: "--", rainMm: 0, rainProbability: 0, aqi: 0, temp: "--", risk: 0.1 };
+const partnerIncomeProfile: Record<string, { daily: number; weekly: number }> = {
+  Zomato: { daily: 920, weekly: 6440 },
+  Swiggy: { daily: 980, weekly: 6860 },
+  Amazon: { daily: 1100, weekly: 7700 },
+  Blinkit: { daily: 1040, weekly: 7280 },
+};
+
+const cityIncomeMultiplier: Record<string, number> = {
+  Mumbai: 1.12,
+  Delhi: 1.08,
+  Bangalore: 0.98,
+  Chennai: 1.02,
+  Vadodara: 0.94,
+  Ahmedabad: 0.96,
+  Surat: 0.95,
+  Pune: 1.0,
+};
+
+const defaultCondition = { rain: "None", rainMm: 0, rainProbability: 0, aqi: 0, temp: "0°C", risk: 0.1 };
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
@@ -100,6 +120,11 @@ const fadeUp = {
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const parseTemperature = (value: string) => {
+  const numeric = Number(String(value || "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
+};
 
 const makeAutoClaimId = () => `AUTO-CLAIM-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
@@ -144,8 +169,10 @@ const normalizeClaimLifecycleStatus = (status?: string | null): ClaimLifecycleSt
 };
 
 const validateUPI = (upiId: string) => {
-  const upiRegex = /^[a-zA-Z0-9.\-_]{3,}@[a-zA-Z]{3,}$/;
-
+  // UPI format: username@provider
+  // Allow alphanumerics, dots, hyphens, underscores before @
+  // Allow alphanumerics and hyphens after @ (provider names)
+  const upiRegex = /^[a-zA-Z0-9.\-_]{3,}@[a-zA-Z0-9\-]{2,}$/i;
   return upiRegex.test(upiId);
 };
 
@@ -162,6 +189,89 @@ const toTitleCase = (value: string) => value
   .filter(Boolean)
   .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
   .join(" ");
+
+const isPlaceholderCityLabel = (value: string) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return true;
+
+  return [
+    "live location",
+    "live gps",
+    "current location",
+    "locating city",
+    "unknown",
+    "n/a",
+    "na",
+  ].includes(normalized);
+};
+
+const normalizeCityLabel = (value: string) => {
+  const cleaned = String(value || "").trim();
+  if (!cleaned || isPlaceholderCityLabel(cleaned)) return "";
+  return toTitleCase(cleaned.replace(/\s+/g, " "));
+};
+
+const buildDynamicPersonaLabel = ({
+  city,
+  rainMm,
+  rainProbability,
+  aqi,
+  temperature,
+  riskScore,
+}: {
+  city: string;
+  rainMm: number;
+  rainProbability: number;
+  aqi: number;
+  temperature: number;
+  riskScore: number;
+}) => {
+  const resolvedCity = normalizeCityLabel(city);
+  const citySuffix = resolvedCity ? ` (${resolvedCity})` : "";
+
+  if (riskScore >= 0.7 || rainMm >= 20 || rainProbability >= 70) {
+    return `Rain-Heavy City Rider${citySuffix}`;
+  }
+
+  if (aqi >= 150) {
+    return `Air-Quality Sensitive Rider${citySuffix}`;
+  }
+
+  if (temperature >= 38) {
+    return `Heat-Stress Rider${citySuffix}`;
+  }
+
+  return `Balanced Conditions Rider${citySuffix}`;
+};
+
+const formatRupees = (amount: number) => `₹${Math.round(amount).toLocaleString("en-IN")}`;
+
+const estimateEarningsForWorker = ({
+  deliveryPartner,
+  city,
+  riskScore,
+  policyActive,
+}: {
+  deliveryPartner: string;
+  city: string;
+  riskScore: number;
+  policyActive: boolean;
+}) => {
+  const partnerBase = partnerIncomeProfile[deliveryPartner] || partnerIncomeProfile.Zomato;
+  const cityMultiplier = cityIncomeMultiplier[normalizeCityLabel(city)] || 1;
+  const riskMultiplier = clamp(1 - (clamp(riskScore, 0, 1) * 0.18), 0.72, 1.02);
+  const policyMultiplier = policyActive ? 1.03 : 1;
+
+  const dailyEstimate = partnerBase.daily * cityMultiplier * riskMultiplier * policyMultiplier;
+  const weeklyEstimate = partnerBase.weekly * cityMultiplier * riskMultiplier * policyMultiplier;
+
+  return {
+    dailyLow: formatRupees(dailyEstimate * 0.88),
+    dailyHigh: formatRupees(dailyEstimate * 1.12),
+    weeklyLow: formatRupees(weeklyEstimate * 0.88),
+    weeklyHigh: formatRupees(weeklyEstimate * 1.12),
+  };
+};
 
 const statusBadgeClass = (status: "ACTIVE" | "SAFE" | "MEDIUM") => {
   if (status === "ACTIVE") return "bg-risk-high-bg text-risk-high border border-risk-high/30";
@@ -180,22 +290,6 @@ const loadRazorpayScript = async (): Promise<boolean> => {
     script.onerror = () => resolve(false);
     document.body.appendChild(script);
   });
-};
-
-const resolveCoordinates = async (city: string) => {
-  const direct = cityCoordinates[city];
-  if (direct) return direct;
-
-  const response = await fetch(
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`,
-  );
-  if (!response.ok) return null;
-
-  const data = await response.json();
-  const first = data?.results?.[0];
-  if (!first) return null;
-
-  return { latitude: Number(first.latitude), longitude: Number(first.longitude) };
 };
 
 const buildRecommendations = (trend: TrendPoint[], mode: UserSession["preferences"]["aiRecommendationMode"]): ShiftRecommendation[] => {
@@ -261,26 +355,27 @@ const WorkerDashboard = () => {
     planId: null,
     endsAt: null,
   });
+  const [weatherData, setWeatherData] = useState<any>({ temperature_2m: 25, precipitation: 0, precipitation_probability: 0 });
+  const [aiqData, setAiqData] = useState<any>({ us_aqi: 100 });
+  const [trafficData, setTrafficData] = useState<any>({ delay_ratio: 1.0, avg_speed: 60, condition: "Light" });
+  const [loadingWeather, setLoadingWeather] = useState(false);
 
   const userName = toTitleCase(user?.name || tx(language, "Worker", "वर्कर"));
-  const userCity = user?.city?.trim() || "";
-  const displayCity = userCity || tx(language, "Update city in profile", "प्रोफाइल में शहर अपडेट करें");
+  const userCity = normalizeCityLabel(user?.city || "Mumbai"); // Default to Mumbai if no city set
+  
+  // effectiveCity: use actual city names only for lookups
+  const effectiveCity = userCity || "";
+  
+  // displayCity: show to user
+  const displayCity = userCity || tx(language, "Your Location", "आपका स्थान");
+  
   const policyActive = Boolean(user?.policyActive);
   const personaType = user?.persona_type || "rain";
-  const personaProfile = personaType === "rain"
-    ? "Rain-Heavy City Rider 🌧️"
-    : personaType === "pollution"
-      ? "Air-Quality Sensitive Rider 🌫️"
-      : "Balanced Conditions Rider ☀️";
-  const environmentLabel = personaType === "rain"
-    ? `Rain-heavy city (${userCity || "Mumbai"})`
-    : personaType === "pollution"
-      ? `Pollution-prone city (${userCity || "Delhi"})`
-      : `Normal conditions city (${userCity || "Bangalore"})`;
+  const environmentLabel = `Current operating zone (${displayCity})`;
   const deliveryPartner = user?.deliveryPartner || "Zomato";
 
-  const currentCondition = useMemo(() => liveCondition || cityConditions[userCity] || defaultCondition, [liveCondition, userCity]);
-  const currentTemp = useMemo(() => Number(currentCondition.temp.replace("°C", "") || 0), [currentCondition.temp]);
+  const currentCondition = useMemo(() => liveCondition || cityConditions[effectiveCity] || defaultCondition, [effectiveCity, liveCondition]);
+  const currentTemp = useMemo(() => parseTemperature(currentCondition.temp), [currentCondition.temp]);
   const rainImpactAssessment = useMemo(
     () => calculateRisk({
       rainProbability: currentCondition.rainProbability,
@@ -291,6 +386,14 @@ const WorkerDashboard = () => {
   );
   const rainImpactPercent = Math.round(rainImpactAssessment.riskScore * 100);
   const rainImpactLevel = rainImpactAssessment.riskLevel;
+  const personaProfile = buildDynamicPersonaLabel({
+    city: effectiveCity || userCity,
+    rainMm: currentCondition.rainMm,
+    rainProbability: currentCondition.rainProbability,
+    aqi: currentCondition.aqi,
+    temperature: currentTemp,
+    riskScore: rainImpactAssessment.riskScore,
+  });
   const nextSixHoursForecast = useMemo(
     () => generateRiskForecast({
       rainProbability: currentCondition.rainProbability,
@@ -349,9 +452,24 @@ const WorkerDashboard = () => {
     [],
   );
 
+  // Determine recommended plan based on salary
+  const getRecommendedPlanBySalary = (salary?: number) => {
+    if (!salary) return "day-shield"; // Default to low-risk plan
+    if (salary < 40000) return "day-shield"; // Low-tier for lower salaries
+    if (salary <= 80000) return "rush-hour-cover"; // Mid-tier for moderate salaries
+    return "night-safety"; // Premium plan for higher salaries
+  };
+
   const riskLevel = demoState.riskLevel;
+  const salaryRecommendedPlanId = getRecommendedPlanBySalary(user?.salary);
   const recommendedPlanId = riskLevel === "HIGH" ? "night-safety" : riskLevel === "MEDIUM" ? "rush-hour-cover" : "day-shield";
   const realtimeRiskLevel = rainImpactAssessment.riskLevel;
+  const earningsEstimate = useMemo(() => estimateEarningsForWorker({
+    deliveryPartner,
+    city: effectiveCity || userCity,
+    riskScore: rainImpactAssessment.riskScore,
+    policyActive,
+  }), [deliveryPartner, effectiveCity, policyActive, rainImpactAssessment.riskScore, userCity]);
   const canUseTestMode = import.meta.env.DEV;
   const forceTriggerForTesting = canUseTestMode && testModeEnabled;
   const estimatedActivity = clamp(Math.round(100 - currentCondition.rainProbability - currentCondition.rainMm * 0.8), 10, 100);
@@ -576,13 +694,18 @@ const WorkerDashboard = () => {
       setIsProcessing(true);
       setPaymentStatus(tx(language, "Processing payment...", "पेमेंट प्रोसेस हो रही है..."));
 
-      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      // Validate amount
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error(`Invalid amount: ₹${amount}`);
+      }
 
       const loaded = await loadRazorpayScript();
       if (!loaded) {
-        throw new Error("Razorpay SDK failed to load");
+        throw new Error("Razorpay SDK failed to load. Please refresh and try again.");
       }
 
+      // Create payment order with proper error logging
+      console.log(`[Payment] Creating order for amount: ₹${amount}`);
       const res = await fetch("/api/payment/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -590,14 +713,23 @@ const WorkerDashboard = () => {
       });
 
       if (!res.ok) {
-        throw new Error("Unable to create payment order");
+        const errorText = await res.text();
+        console.error(`[Payment] Order creation failed (${res.status}):`, errorText);
+        throw new Error(`Order creation failed: ${res.status} ${errorText || "Unknown error"}`);
       }
 
       const order = await res.json();
+      console.log("[Payment] Order created:", order.id);
+
+      if (!order?.id) {
+        throw new Error("Invalid order response from server");
+      }
+
       const keyId = import.meta.env.VITE_RAZORPAY_KEY_ID;
+      console.log("[Payment] Razorpay Key ID:", keyId ? "configured" : "MISSING!");
 
       if (!keyId) {
-        throw new Error("Missing VITE_RAZORPAY_KEY_ID");
+        throw new Error("Razorpay Key ID not configured in environment (.env file)");
       }
 
       await new Promise<void>((resolve, reject) => {
@@ -610,6 +742,7 @@ const WorkerDashboard = () => {
           order_id: order.id,
           handler: async (response: RazorpayHandlerResponse) => {
             try {
+              console.log("[Payment] Handler response received:", response.razorpay_payment_id);
               const verifyRes = await fetch("/api/payment/verify", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -618,65 +751,68 @@ const WorkerDashboard = () => {
 
               const verifyResult = await verifyRes.json();
               if (!verifyRes.ok || !verifyResult.verified) {
+                console.error("[Payment] Verification failed:", verifyResult);
                 throw new Error("Payment verification failed");
               }
 
+              console.log("[Payment] Verification successful!");
               setPaymentStatus(tx(language, "✅ Payment Successful", "✅ पेमेंट सफल"));
               await activatePlan(planId);
               resolve();
-            } catch {
+            } catch (error) {
+              console.error("[Payment] Handler error:", error);
               setPaymentStatus(tx(language, "Payment verification failed", "पेमेंट वेरिफिकेशन असफल"));
               toast.warning(tx(language, "Payment verification failed.", "पेमेंट वेरिफिकेशन असफल रहा।"));
               reject(new Error("Verification failed"));
             }
           },
           prefill: {
-            method: "upi",
             email: user.email,
+            contact: user.phone || "",
             name: user.name,
+          },
+          notes: {
+            plan_id: planId,
+            worker_email: user.email,
+            upi_id: upiId,
           },
           theme: {
             color: "#2563eb",
           },
           modal: {
             ondismiss: () => {
+              console.log("[Payment] Razorpay modal dismissed");
               setIsProcessing(false);
               setPaymentStatus(tx(language, "Payment cancelled", "पेमेंट रद्द की गई"));
             },
           },
         };
 
+        console.log("[Payment] Opening Razorpay modal with options:", { amount: order.amount, orderId: order.id });
         const rzp = new window.Razorpay(options);
-        rzp.on("payment.failed", () => {
+        rzp.on("payment.failed", (error: any) => {
+          console.error("[Payment] Payment failed:", error);
           setIsProcessing(false);
-          setPaymentStatus(tx(language, "❌ Payment failed", "❌ पेमेंट असफल"));
-          toast.error(tx(language, "Payment failed. Try again.", "पेमेंट असफल। फिर से प्रयास करें।"));
-          reject(new Error("Payment failed"));
+          const errorMsg = error?.error?.description || "Payment failed";
+          setPaymentStatus(tx(language, `❌ ${errorMsg}`, `❌ ${errorMsg}`));
+          toast.error(tx(language, errorMsg, errorMsg));
+          reject(new Error(errorMsg));
         });
         rzp.open();
       });
     } catch (error) {
-      setPaymentStatus(tx(language, "❌ Unable to start payment", "❌ पेमेंट शुरू नहीं हो सकी"));
-      toast.error((error as Error).message || tx(language, "Unable to process payment.", "पेमेंट प्रोसेस नहीं हो सकी।"));
-    } finally {
       setIsProcessing(false);
+      const errorMsg = (error as Error).message || "Unable to process payment";
+      console.error("[Payment] Error:", errorMsg);
+      setPaymentStatus(tx(language, `❌ ${errorMsg}`, `❌ ${errorMsg}`));
+      toast.error(tx(language, errorMsg, errorMsg));
     }
   };
 
   const handlePurchase = (planId: string) => {
     const plan = planCatalog.find((item) => item.id === planId);
     if (!plan) return;
-
-    if (!upiId.trim()) {
-      alert(tx(language, "⚠️ Enter UPI ID", "⚠️ UPI ID दर्ज करें"));
-      return;
-    }
-
-    if (!validateUPI(upiId.trim())) {
-      alert(tx(language, "❌ Invalid UPI ID (example: khushi@oksbi)", "❌ अमान्य UPI ID (उदाहरण: khushi@oksbi)"));
-      return;
-    }
-
+    // No UPI validation needed - let Razorpay handle payment with all options
     void initiateRazorpay(planId, parseMoney(plan.premium));
   };
 
@@ -856,6 +992,85 @@ const WorkerDashboard = () => {
     };
   }, [user?.city, user?.deliveryPartner, user?.email, user?.name, user?.persona_type]);
 
+  // Fetch weather and environment data for user's city
+  useEffect(() => {
+    if (!userCity || !user?.email) {
+      // Set default values if no city
+      setWeatherData({ temperature_2m: 25, precipitation: 0, precipitation_probability: 0 });
+      setAiqData({ us_aqi: 100 });
+      setTrafficData({ delay_ratio: 1.0, avg_speed: 60, condition: "Light" });
+      setLoadingWeather(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingWeather(true);
+
+    const fetchWeatherData = async () => {
+      try {
+        console.log("🌤 Fetching weather for city:", userCity);
+        
+        // Use backend API which handles all weather data
+        const res = await fetch("/api/ai/risk/assess", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            city: userCity,
+            workerEmail: user.email,
+          }),
+        });
+
+        if (cancelled) return;
+        
+        if (!res.ok) {
+          console.error("Weather API error:", res.status);
+          throw new Error(`API error: ${res.status}`);
+        }
+
+        const data = await res.json();
+        console.log("✅ Weather data received:", data);
+        
+        const current = data?.current;
+        
+        if (current) {
+          // Extract weather from backend response
+          setWeatherData({
+            temperature_2m: current.temperature || 25,
+            precipitation: current.rainMm || 0,
+            precipitation_probability: current.rainProbability || 0,
+          });
+
+          // Extract AQI
+          setAiqData({
+            us_aqi: current.aqi || 100,
+          });
+        }
+
+        // Set traffic data from backend
+        if (data?.signals) {
+          setTrafficData({
+            delay_ratio: data.signals.trafficDelayRatio || 1.0,
+            avg_speed: Math.round(60 / (data.signals.trafficDelayRatio || 1.0)),
+            condition: (data.signals.trafficDelayRatio || 1.0) > 1.3 ? "Heavy" : (data.signals.trafficDelayRatio || 1.0) > 1.1 ? "Moderate" : "Light",
+          });
+        }
+      } catch (error) {
+        console.error("❌ Weather fetch error:", error);
+        // Use fallback data
+        setWeatherData({ temperature_2m: 25, precipitation: 0, precipitation_probability: 0 });
+        setAiqData({ us_aqi: 100 });
+        setTrafficData({ delay_ratio: 1.0, avg_speed: 60, condition: "Light" });
+      } finally {
+        if (!cancelled) setLoadingWeather(false);
+      }
+    };
+
+    fetchWeatherData();
+    return () => {
+      cancelled = true;
+    };
+  }, [userCity, user?.email]);
+
   useEffect(() => {
     if (!user) return;
     const derived = calculateRisk({
@@ -1015,10 +1230,11 @@ const WorkerDashboard = () => {
     });
   }, [user?.city, user?.deliveryPartner, user?.email, user?.name, user?.persona_type]);
 
+  // Load risk assessment and trend data based on profile city
   useEffect(() => {
     let cancelled = false;
 
-    const loadCurrentWeather = async () => {
+    const loadRiskData = async () => {
       if (!userCity) {
         setLiveCondition(null);
         setTrendData(fallbackTrend);
@@ -1028,45 +1244,31 @@ const WorkerDashboard = () => {
       setIsWeatherLoading(true);
 
       try {
-        const coordinates = await resolveCoordinates(userCity);
-        if (!coordinates) throw new Error("Coordinates not found");
+        const ai = await fetchAiRiskAssessment({
+          city: userCity,
+          workerEmail: user?.email,
+        });
 
-        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=temperature_2m,precipitation,rain,precipitation_probability&hourly=temperature_2m,precipitation_probability,rain&timezone=auto&forecast_days=1`;
-        const airUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=us_aqi&hourly=us_aqi&timezone=auto&forecast_days=1`;
-
-        const [weatherRes, airRes] = await Promise.all([fetch(weatherUrl), fetch(airUrl)]);
-        if (!weatherRes.ok || !airRes.ok) throw new Error("Unable to fetch live weather");
-
-        const weatherData = await weatherRes.json();
-        const airData = await airRes.json();
-
-        const temp = Number(weatherData?.current?.temperature_2m ?? 0);
-        const rain = Number(weatherData?.current?.rain ?? weatherData?.current?.precipitation ?? 0);
-        const currentAqi = Number(airData?.current?.us_aqi ?? cityConditions[userCity]?.aqi ?? 100);
-        const rainProbability = Number(weatherData?.current?.precipitation_probability ?? weatherData?.hourly?.precipitation_probability?.[0] ?? 0);
-        const riskResult = calculateRisk({ rainProbability, aqi: currentAqi, temperature: temp });
+        const temp = Number(ai.current.temperature ?? 0);
+        const rain = Number(ai.current.rainMm ?? 0);
+        const currentAqi = Number(ai.current.aqi ?? cityConditions[userCity]?.aqi ?? 100);
+        const rainProbability = Number(ai.current.rainProbability ?? 0);
+        const riskResult = {
+          riskScore: Number(ai.current.risk.riskScore ?? 0),
+          riskLevel: ai.current.risk.riskLevel,
+        };
         const risk = riskResult.riskScore;
 
-        const hourlyTimes: string[] = weatherData?.hourly?.time || [];
-        const hourlyTemps: number[] = weatherData?.hourly?.temperature_2m || [];
-        const hourlyProb: number[] = weatherData?.hourly?.precipitation_probability || [];
-        const hourlyAqi: number[] = airData?.hourly?.us_aqi || [];
-
-        const nextTrend: TrendPoint[] = [];
-        for (let i = 0; i < hourlyTimes.length; i += 1) {
-          const date = new Date(hourlyTimes[i]);
-          const hour = date.getHours();
-          if (hour < 6 || hour > 20 || hour % 2 !== 0) continue;
-
-          const pointRisk = calculateRisk({
-            rainProbability: Number(hourlyProb[i] ?? 0),
-            aqi: Number(hourlyAqi[i] ?? currentAqi),
-            temperature: Number(hourlyTemps[i] ?? temp),
-          }).riskScore;
-          nextTrend.push({ time: toLabel(hour), score: Number(pointRisk.toFixed(2)), hour });
-        }
+        const nextTrend: TrendPoint[] = (ai.trend || [])
+          .map((point) => ({
+            time: point.label || toLabel(point.hour),
+            score: Number(Number(point.riskScore || 0).toFixed(2)),
+            hour: Number(point.hour || 0),
+          }))
+          .filter((point) => point.hour >= 6 && point.hour <= 20 && point.hour % 2 === 0);
 
         if (!cancelled) {
+          // Log risk data to database
           void syncRiskDataToDb({
             city: userCity,
             rain_probability: Math.round(rainProbability),
@@ -1075,7 +1277,7 @@ const WorkerDashboard = () => {
             risk_score: Number(risk.toFixed(2)),
             risk_level: riskResult.riskLevel,
           }).catch(() => {
-            // Non-blocking risk logging.
+            // Non-blocking risk logging
           });
 
           setLiveCondition({
@@ -1086,6 +1288,7 @@ const WorkerDashboard = () => {
             temp: `${Math.round(temp)}°C`,
             risk: Number(risk.toFixed(2)),
           });
+
           if (nextTrend.length >= 4) {
             setTrendData(nextTrend);
           } else {
@@ -1104,14 +1307,14 @@ const WorkerDashboard = () => {
       }
     };
 
-    loadCurrentWeather();
-    const intervalId = window.setInterval(loadCurrentWeather, 10 * 60 * 1000);
+    loadRiskData();
+    const intervalId = window.setInterval(loadRiskData, 10 * 60 * 1000);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [userCity, user?.preferences?.aiRecommendationMode]);
+  }, [userCity, user?.email, user?.preferences?.aiRecommendationMode]);
 
   return (
     <div className="min-h-screen bg-[#0B1220]">
@@ -1194,9 +1397,13 @@ const WorkerDashboard = () => {
             <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-2">
               <MapPin className="w-3.5 h-3.5" /> {displayCity} | {formattedDate}
             </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              📍 Working in: <span className="text-blue-400 font-semibold">{userCity}</span> {loadingWeather ? "📡 Loading weather..." : "✅ Weather updated"}
+            </p>
             <p className="text-sm text-muted-foreground mt-2">Delivery Partner: {deliveryPartner}</p>
-            <p className="text-sm text-muted-foreground mt-1">{tx(language, "💰 Daily Earnings: ₹800–₹1200", "💰 दैनिक कमाई: ₹800–₹1200")}</p>
-            <p className="text-sm text-muted-foreground mt-1">{tx(language, "📅 Weekly Earnings: ₹6000–₹8000", "📅 साप्ताहिक कमाई: ₹6000–₹8000")}</p>
+            {user?.salary && <p className="text-sm text-muted-foreground mt-1">Monthly Salary: ₹{Number(user.salary).toLocaleString('en-IN')}</p>}
+            <p className="text-sm text-muted-foreground mt-1">{tx(language, `💰 Daily Earnings: ${earningsEstimate.dailyLow}–${earningsEstimate.dailyHigh}`, `💰 दैनिक कमाई: ${earningsEstimate.dailyLow}–${earningsEstimate.dailyHigh}`)}</p>
+            <p className="text-sm text-muted-foreground mt-1">{tx(language, `📅 Weekly Earnings: ${earningsEstimate.weeklyLow}–${earningsEstimate.weeklyHigh}`, `📅 साप्ताहिक कमाई: ${earningsEstimate.weeklyLow}–${earningsEstimate.weeklyHigh}`)}</p>
             <p className="text-sm text-foreground mt-2 font-medium">Your Profile: {personaProfile}</p>
             <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5"><CloudRain className="w-3.5 h-3.5" /> Your Work Environment: {environmentLabel}</p>
           </div>
@@ -1249,7 +1456,67 @@ const WorkerDashboard = () => {
                 <p className="text-xs text-amber-100/70 mt-2">Based on current live risk conditions</p>
               </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            {/* Weather, AQI, and Traffic Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+              {/* Weather Card */}
+              <motion.div variants={fadeUp} custom={0} initial="hidden" animate="visible" className="rounded-2xl p-6 border border-blue-400/30 bg-blue-950/40 shadow-[0_0_18px_rgba(59,130,246,0.12)] hover:shadow-[0_0_28px_rgba(59,130,246,0.18)] transition-all">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-blue-200/80">🌤 Weather</p>
+                    <p className="text-2xl font-bold text-blue-300 mt-2">{weatherData?.temperature_2m ? `${Math.round(weatherData.temperature_2m)}°C` : "N/A"}</p>
+                    <p className="text-xs text-blue-100/70 mt-1">{weatherData?.precipitation ? `${weatherData.precipitation}mm rain` : "No rain"}</p>
+                    <p className="text-xs text-blue-100/70 mt-0.5">{weatherData?.precipitation_probability ? `${weatherData.precipitation_probability}% chance` : "Clear skies"}</p>
+                  </div>
+                  <div className="text-4xl">{weatherData?.precipitation && weatherData.precipitation > 0 ? "🌧" : "☀️"}</div>
+                </div>
+              </motion.div>
+
+              {/* AQI Card */}
+              <motion.div variants={fadeUp} custom={1} initial="hidden" animate="visible" className="rounded-2xl p-6 border border-purple-400/30 bg-purple-950/40 shadow-[0_0_18px_rgba(168,85,247,0.12)] hover:shadow-[0_0_28px_rgba(168,85,247,0.18)] transition-all">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-purple-200/80">💨 Air Quality</p>
+                    <p className="text-2xl font-bold text-purple-300 mt-2">{aiqData?.us_aqi ? Math.round(aiqData.us_aqi) : "N/A"}</p>
+                    <p className="text-xs text-purple-100/70 mt-1">
+                      {aiqData?.us_aqi ? (
+                        aiqData.us_aqi > 300 ? "Hazardous 🔴" : 
+                        aiqData.us_aqi > 200 ? "Very Unhealthy 🟠" :
+                        aiqData.us_aqi > 150 ? "Unhealthy 🟡" :
+                        aiqData.us_aqi > 100 ? "Moderate ⚪" :
+                        "Good 🟢"
+                      ) : "N/A"}
+                    </p>
+                    <p className="text-xs text-purple-100/70 mt-0.5">AQI Index</p>
+                  </div>
+                  <div className="text-4xl">
+                    {aiqData?.us_aqi ? (
+                      aiqData.us_aqi > 300 ? "🚨" :
+                      aiqData.us_aqi > 150 ? "⚠️" :
+                      "✅"
+                    ) : "❓"}
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Traffic Card */}
+              <motion.div variants={fadeUp} custom={2} initial="hidden" animate="visible" className="rounded-2xl p-6 border border-orange-400/30 bg-orange-950/40 shadow-[0_0_18px_rgba(234,88,12,0.12)] hover:shadow-[0_0_28px_rgba(234,88,12,0.18)] transition-all">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-orange-200/80">🚗 Traffic</p>
+                    <p className="text-2xl font-bold text-orange-300 mt-2">{trafficData?.condition || "Moderate"}</p>
+                    <p className="text-xs text-orange-100/70 mt-1">{trafficData?.avg_speed ? `${trafficData.avg_speed} km/h avg` : "Normal flow"}</p>
+                    <p className="text-xs text-orange-100/70 mt-0.5">{trafficData?.delay_ratio ? `${(trafficData.delay_ratio * 100).toFixed(0)}% delay` : "No delay"}</p>
+                  </div>
+                  <div className="text-4xl">
+                    {trafficData?.condition === "Heavy" ? "🔴" :
+                     trafficData?.condition === "Moderate" ? "🟡" : "🟢"}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
               <div className="rounded-2xl p-6 border border-emerald-400/35 bg-[rgba(16,32,24,0.72)] shadow-[0_0_20px_rgba(34,197,94,0.14)]">
                 <p className="text-xs font-medium text-muted-foreground">Core Impact</p>
                 <h3 className="text-3xl md:text-[2rem] font-bold text-emerald-300 mt-1">💰 Wallet: ₹{demoState.walletBalance}</h3>
@@ -1408,11 +1675,21 @@ const WorkerDashboard = () => {
                   <h3 className="font-display font-semibold text-foreground">Available Plans</h3>
                   <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">No waiting period</span>
                 </div>
+                {user?.salary && (
+                  <div className="mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-100">
+                    <p className="text-xs font-semibold mb-1">💡 Plan Recommendation Based on Your Salary</p>
+                    <p className="text-xs">
+                      Your monthly salary is ₹{Number(user.salary).toLocaleString('en-IN')}. We recommend the{' '}
+                      {user.salary < 40000 ? 'Low Risk Plan' : user.salary <= 80000 ? 'Medium Risk Plan' : 'Premium Risk Plan'} for optimal coverage.
+                    </p>
+                  </div>
+                )}
                 <div className="grid md:grid-cols-1 xl:grid-cols-2 gap-4">
                   {planCatalog.map((plan) => {
                     const selected = activePlan?.id === plan.id;
                     const inPayment = paymentPlanId === plan.id;
-                    const recommended = plan.id === recommendedPlanId;
+                    // Use salary-based recommendation if salary is available, otherwise use risk-based
+                    const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
                     return (
                       <div key={plan.id} className={`rounded-xl p-4 ${selected ? "bg-accent/10 border border-accent/30" : "bg-card/50 border border-border/50"}`}>
                         <div className="flex items-start justify-between gap-2 mb-2">
@@ -1430,20 +1707,16 @@ const WorkerDashboard = () => {
                           <Button className="w-full gap-2" variant="secondary"><Wallet className="w-4 h-4" /> Selected</Button>
                         ) : inPayment ? (
                           <div className="space-y-2">
-                            <Input
-                              type="text"
-                              value={upiId}
-                              onChange={(e) => {
-                                setUpiId(e.target.value);
-                                setPaymentStatus("");
-                              }}
-                              placeholder={tx(language, "Enter UPI ID (example@upi)", "UPI ID दर्ज करें (example@upi)")}
-                            />
-                            <div className="grid grid-cols-2 gap-2">
-                              <Button className="w-full" disabled={isProcessing} onClick={() => handlePurchase(plan.id)}>{isProcessing ? tx(language, "Processing...", "प्रोसेसिंग...") : tx(language, "Pay & Activate Plan", "पे करें और प्लान एक्टिवेट करें")}</Button>
-                              <Button className="w-full" variant="outline" disabled={isProcessing} onClick={() => setPaymentPlanId(null)}>{tx(language, "Cancel", "रद्द करें")}</Button>
+                            <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs text-blue-400 text-center">
+                              💳 Enter UPI on Razorpay
                             </div>
-                            {paymentStatus && <p className={`mt-1 text-xs ${paymentStatus.includes("Successful") ? "text-green-600" : "text-muted-foreground"}`}>{paymentStatus}</p>}
+                            <Button className="w-full" disabled={isProcessing} onClick={() => handlePurchase(plan.id)} variant="default">
+                              {isProcessing ? tx(language, "Processing...", "प्रोसेसिंग...") : "Open Payment"}
+                            </Button>
+                            <Button className="w-full" variant="outline" disabled={isProcessing} onClick={() => setPaymentPlanId(null)}>
+                              {tx(language, "Cancel", "रद्द करें")}
+                            </Button>
+                            {paymentStatus && <p className={`mt-1 text-xs text-center ${paymentStatus.includes("✅") || paymentStatus.includes("Successful") ? "text-green-600" : "text-orange-400"}`}>{paymentStatus}</p>}
                           </div>
                         ) : (
                           <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}><Wallet className="w-4 h-4" /> {tx(language, "Choose Plan", "प्लान चुनें")}</Button>

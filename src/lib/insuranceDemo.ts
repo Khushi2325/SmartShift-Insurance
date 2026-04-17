@@ -402,11 +402,16 @@ const getFlags = (): FraudFlaggedUser[] => {
 const makeId = () => `TX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const toFinite = (value: number, fallback = 0) => (Number.isFinite(value) ? value : fallback);
 
 export const calculateRisk = ({ rainProbability, aqi, temperature }: Pick<RiskMetrics, "rainProbability" | "aqi" | "temperature">): RiskResult => {
-  const rainFactor = clamp(rainProbability / 100, 0, 1);
-  const aqiFactor = clamp(aqi / 500, 0, 1);
-  const tempFactor = clamp(temperature / 50, 0, 1);
+  const safeRainProbability = toFinite(rainProbability, 0);
+  const safeAqi = toFinite(aqi, 0);
+  const safeTemperature = toFinite(temperature, 0);
+
+  const rainFactor = clamp(safeRainProbability / 100, 0, 1);
+  const aqiFactor = clamp(safeAqi / 500, 0, 1);
+  const tempFactor = clamp(safeTemperature / 50, 0, 1);
 
   const rainContribution = 0.6 * rainFactor;
   const aqiContribution = 0.25 * aqiFactor;
@@ -484,9 +489,9 @@ export const generateRiskForecast = (
 ): RiskForecastPoint[] => {
   const forecast: RiskForecastPoint[] = [];
 
-  let rainProbability = currentData.rainProbability;
-  let aqi = currentData.aqi;
-  const temperature = currentData.temperature;
+  let rainProbability = toFinite(currentData.rainProbability, 0);
+  let aqi = toFinite(currentData.aqi, 0);
+  const temperature = toFinite(currentData.temperature, 0);
 
   for (let i = 1; i <= 6; i += 1) {
     rainProbability = clamp(rainProbability + (Math.random() * 10 - 5), 0, 100);

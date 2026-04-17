@@ -4,9 +4,9 @@ import { Shield, Mail, Lock, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "react-router-dom";
-import { getSession, setSession } from "@/lib/session";
+import { setSession } from "@/lib/session";
 import { ADMIN_DEMO_EMAIL, ADMIN_DEMO_PASSWORD, authenticateUser, validateEmailAuthenticity } from "@/lib/auth";
-import { fetchUserProfile, fetchWorkerPortalState, syncWorkerToDb } from "@/lib/dbApi";
+import { fetchUserProfile, fetchWorkerPortalState } from "@/lib/dbApi";
 import { tx, useAppLanguage } from "@/lib/preferences";
 
 const normalizePlanId = (value: string | null | undefined) => {
@@ -37,7 +37,7 @@ const LoginPage = () => {
       return;
     }
 
-    const login = authenticateUser(email, password);
+    const login = await authenticateUser(email, password);
     if (!login.ok || !login.session) {
       setError(login.message || tx(language, "Unable to login.", "लॉगिन नहीं हो सका।"));
       return;
@@ -47,18 +47,6 @@ const LoginPage = () => {
       ...login.session,
       _sessionToken: Date.now(),
     };
-
-    try {
-      await syncWorkerToDb({
-        name: login.session.name,
-        email: login.session.email,
-        city: login.session.city,
-        persona_type: login.session.persona_type,
-        delivery_partner: login.session.deliveryPartner,
-      });
-    } catch {
-      // Keep login successful even if DB sync fails temporarily.
-    }
 
     if (login.session.role === "worker") {
       try {

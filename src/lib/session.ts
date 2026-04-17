@@ -19,6 +19,7 @@ export interface UserSession {
   name: string;
   email: string;
   city: string;
+  salary?: number;
   persona_type: PersonaType;
   deliveryPartner: "Zomato" | "Swiggy" | "Amazon" | "Blinkit";
   phone?: string;
@@ -32,6 +33,7 @@ export interface UserSession {
 }
 
 const SESSION_KEY = "smartshift_user";
+const AUTH_TOKEN_KEY = "smartshift_auth_token";
 export const SESSION_UPDATED_EVENT = "smartshift-session-updated";
 
 const defaultPreferences: UserPreferences = {
@@ -56,6 +58,7 @@ export const getSession = (): UserSession | null => {
       name: parsed.name,
       email: parsed.email,
       city: parsed.city || "",
+      salary: typeof parsed.salary === "number" ? parsed.salary : undefined,
       persona_type: parsed.persona_type === "pollution" || parsed.persona_type === "normal" ? parsed.persona_type : "rain",
       deliveryPartner: parsed.deliveryPartner === "Swiggy" || parsed.deliveryPartner === "Amazon" || parsed.deliveryPartner === "Blinkit" ? parsed.deliveryPartner : "Zomato",
       phone: parsed.phone || "",
@@ -91,5 +94,6 @@ export const setSession = (session: UserSession) => {
 
 export const clearSession = () => {
   localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(AUTH_TOKEN_KEY);
   window.dispatchEvent(new Event(SESSION_UPDATED_EVENT));
 };

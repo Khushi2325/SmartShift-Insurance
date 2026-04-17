@@ -245,3 +245,92 @@ export const syncFraudAlertToDb = async (payload: {
 }) => {
   return postJson("/api/db/fraud-alerts", payload);
 };
+
+export const fetchAiRiskAssessment = async (payload: {
+  city?: string;
+  lat?: number;
+  lon?: number;
+  destinationLat?: number;
+  destinationLon?: number;
+  workerEmail?: string;
+}) => {
+  return postJson<{
+    source: string;
+    city: string;
+    coordinates: { latitude: number; longitude: number };
+    destination: { latitude: number; longitude: number };
+    signals: {
+      weatherProvider: string;
+      airProvider: string;
+      trafficProvider: string;
+      trafficDelayRatio: number;
+      routeDurationMinutes: number | null;
+    };
+    current: {
+      temperature: number;
+      rainMm: number;
+      rainProbability: number;
+      aqi: number;
+      ruleRisk: {
+        riskScore: number;
+        riskLevel: "LOW" | "MEDIUM" | "HIGH";
+      };
+      aiRisk: {
+        riskScore: number;
+        riskLevel: "LOW" | "MEDIUM" | "HIGH";
+      };
+      risk: {
+        modelVersion: string;
+        riskScore: number;
+        riskLevel: "LOW" | "MEDIUM" | "HIGH";
+        confidence: "high" | "medium";
+        explanation: {
+          primaryDriver: string;
+          rainImpact: number;
+          airImpact: number;
+          heatImpact: number;
+          trafficImpact: number;
+          features: {
+            rainProbability: number;
+            rainMm: number;
+            aqi: number;
+            temperature: number;
+            trafficDelayRatio: number;
+            hourOfDay: number;
+          };
+          blend: {
+            aiWeight: number;
+            ruleWeight: number;
+            aiScore: number;
+            ruleScore: number;
+          };
+        };
+      };
+    };
+    trend: Array<{ hour: number; label: string; riskScore: number; riskLevel: "LOW" | "MEDIUM" | "HIGH" }>;
+    cache: { hit: boolean; ttlSeconds: number };
+    generatedAt: string;
+  }>("/api/ai/risk/assess", payload);
+};
+
+export const syncLocationRiskToDb = async (payload: {
+  worker_email?: string;
+  city?: string;
+  latitude: number;
+  longitude: number;
+  destination_latitude?: number;
+  destination_longitude?: number;
+  rain_probability: number;
+  rain_mm: number;
+  aqi: number;
+  temperature: number;
+  traffic_delay_ratio: number;
+  rule_score: number;
+  ai_score: number;
+  hybrid_score: number;
+  risk_level: "LOW" | "MEDIUM" | "HIGH";
+  confidence: "high" | "medium";
+  source?: string;
+}) => {
+  return postJson("/api/db/location-risk", payload);
+};

@@ -18,6 +18,7 @@ export const workers = pgTable(
     name: text("name").notNull(),
     email: text("email").notNull(),
     city: text("city").notNull(),
+    salary: real("salary").notNull().default(50000), // Monthly salary in rupees
     personaType: text("persona_type").notNull().default("rain"),
     deliveryPartner: text("delivery_partner").notNull().default("Zomato"),
     activePlan: text("active_plan"),

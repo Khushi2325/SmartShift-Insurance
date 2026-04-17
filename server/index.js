@@ -1,11 +1,15 @@
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import fs from "fs";
+import jwt from "jsonwebtoken";
 import path from "path";
 import pg from "pg";
 import Razorpay from "razorpay";
+import mlRoutes from "./routes/mlRoutes.js";
+import { startTriggerChecker } from "./triggerChecker.js";
 
 dotenv.config();
 
@@ -15,6 +19,12 @@ const { Pool } = pg;
 
 const keyId = process.env.RAZORPAY_KEY_ID;
 const keySecret = process.env.RAZORPAY_KEY_SECRET;
+const jwtSecret = process.env.JWT_SECRET || "smartshift-dev-insecure-secret";
+const mapboxAccessToken = process.env.MAPBOX_ACCESS_TOKEN || "";
+
+if (!process.env.JWT_SECRET) {
+  console.warn("JWT_SECRET is not set. Using an insecure fallback secret for development only.");
+}
 
 if (!keyId || !keySecret) {
   throw new Error("RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are required in .env");
@@ -37,6 +47,20 @@ const ensureSupplementalSchema = async () => {
   if (!dbPool) return;
 
   await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS auth_users (
+      id SERIAL PRIMARY KEY,
+      worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE UNIQUE,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'worker',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await dbPool.query("CREATE UNIQUE INDEX IF NOT EXISTS auth_users_email_lower_uq ON auth_users (LOWER(email));");
+
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS wallets (
       id SERIAL PRIMARY KEY,
       worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE UNIQUE,
@@ -50,6 +74,36 @@ const ensureSupplementalSchema = async () => {
   await dbPool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS active_plan TEXT;");
   await dbPool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS plan_start_time TIMESTAMPTZ;");
   await dbPool.query("ALTER TABLE workers ADD COLUMN IF NOT EXISTS plan_end_time TIMESTAMPTZ;");
+  await dbPool.query("ALTER TABLE risk_data ADD COLUMN IF NOT EXISTS latitude REAL;");
+  await dbPool.query("ALTER TABLE risk_data ADD COLUMN IF NOT EXISTS longitude REAL;");
+  await dbPool.query("ALTER TABLE risk_data ADD COLUMN IF NOT EXISTS traffic_delay_ratio REAL;");
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS worker_location_risk_logs (
+      id SERIAL PRIMARY KEY,
+      worker_id INTEGER REFERENCES workers(id) ON DELETE SET NULL,
+      city TEXT,
+      latitude REAL NOT NULL,
+      longitude REAL NOT NULL,
+      destination_latitude REAL,
+      destination_longitude REAL,
+      rain_probability REAL NOT NULL,
+      rain_mm REAL NOT NULL,
+      aqi REAL NOT NULL,
+      temperature REAL NOT NULL,
+      traffic_delay_ratio REAL NOT NULL,
+      rule_score REAL NOT NULL,
+      ai_score REAL NOT NULL,
+      hybrid_score REAL NOT NULL,
+      risk_level TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await dbPool.query("CREATE INDEX IF NOT EXISTS worker_location_risk_logs_worker_created_idx ON worker_location_risk_logs(worker_id, created_at DESC);");
+  await dbPool.query("CREATE INDEX IF NOT EXISTS worker_location_risk_logs_city_created_idx ON worker_location_risk_logs(city, created_at DESC);");
 };
 
 app.use(cors({ origin: true }));
@@ -64,6 +118,263 @@ const requireDb = (res) => {
 };
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const sigmoid = (x) => 1 / (1 + Math.exp(-x));
+
+const riskSignalCache = new Map();
+const RISK_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const kmBetween = (lat1, lon1, lat2, lon2) => {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
+};
+
+const normalizeCoordinates = ({ latitude, longitude }) => {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return {
+    latitude: Number(lat.toFixed(5)),
+    longitude: Number(lon.toFixed(5)),
+  };
+};
+
+const buildRiskCacheKey = ({ latitude, longitude, destinationLatitude, destinationLongitude }) => {
+  const srcLat = Number(latitude).toFixed(3);
+  const srcLon = Number(longitude).toFixed(3);
+  const destLat = Number(destinationLatitude ?? latitude).toFixed(3);
+  const destLon = Number(destinationLongitude ?? longitude).toFixed(3);
+  return `${srcLat},${srcLon}:${destLat},${destLon}`;
+};
+
+const getFromRiskCache = (key) => {
+  const hit = riskSignalCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.createdAt > RISK_CACHE_TTL_MS) {
+    riskSignalCache.delete(key);
+    return null;
+  }
+  return hit.payload;
+};
+
+const saveToRiskCache = (key, payload) => {
+  riskSignalCache.set(key, {
+    createdAt: Date.now(),
+    payload,
+  });
+};
+
+const toNum = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const resolveCityCoordinates = async (city) => {
+  const trimmed = String(city || "").trim();
+  if (!trimmed) return null;
+
+  const response = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(trimmed)}&count=1&language=en&format=json`,
+  );
+
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  const first = data?.results?.[0];
+  if (!first) return null;
+
+  return {
+    latitude: Number(first.latitude),
+    longitude: Number(first.longitude),
+    city: String(first.name || trimmed),
+  };
+};
+
+const resolveCoordinatesToCity = async ({ latitude, longitude }) => {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  const pickCityFromAddress = (address) => {
+    if (!address || typeof address !== "object") return null;
+    const candidates = [
+      address.city,
+      address.town,
+      address.village,
+      address.municipality,
+      address.suburb,
+      address.county,
+      address.district,
+      address.state_district,
+      address.state,
+    ];
+
+    for (const candidate of candidates) {
+      const value = String(candidate || "").trim();
+      if (value) return value;
+    }
+
+    return null;
+  };
+
+  const nominatimResponse = await fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}&zoom=18&addressdetails=1`,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (nominatimResponse.ok) {
+    const nominatimData = await nominatimResponse.json();
+    const city = pickCityFromAddress(nominatimData?.address);
+    if (city) {
+      return {
+        city,
+        country: String(nominatimData?.address?.country || "").trim() || null,
+      };
+    }
+
+    const displayName = String(nominatimData?.display_name || "").trim();
+    if (displayName) {
+      const firstPart = displayName.split(",")[0].trim();
+      if (firstPart) {
+        return {
+          city: firstPart,
+          country: String(nominatimData?.address?.country || "").trim() || null,
+        };
+      }
+    }
+  }
+
+  const response = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lon))}&language=en&format=json`,
+  );
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  const results = Array.isArray(data?.results) ? data.results : [];
+  for (const first of results) {
+    const city = String(first?.name || first?.admin1 || first?.country || "").trim();
+    if (city) {
+      return {
+        city,
+        country: String(first?.country || "").trim() || null,
+      };
+    }
+  }
+
+  return null;
+};
+
+const calculateAiRisk = ({ rainProbability, aqi, temperature, rainMm, trafficDelayRatio = 1, hourOfDay, priorRisk = 0 }) => {
+  const rainProbNorm = clamp(toNum(rainProbability) / 100, 0, 1);
+  const aqiNorm = clamp(toNum(aqi) / 500, 0, 1);
+  const tempNorm = clamp(toNum(temperature) / 50, 0, 1);
+  const rainMmNorm = clamp(toNum(rainMm) / 100, 0, 1);
+  const trafficNorm = clamp((toNum(trafficDelayRatio, 1) - 1) / 2, 0, 1);
+  const peakHour = hourOfDay >= 11 && hourOfDay <= 15 ? 1 : 0;
+
+  // Lightweight logistic model coefficients tuned for delivery disruption likelihood.
+  const linear = (
+    -1.25
+    + 1.45 * rainProbNorm
+    + 1.1 * aqiNorm
+    + 0.55 * tempNorm
+    + 0.85 * rainMmNorm
+    + 0.95 * trafficNorm
+    + 0.3 * peakHour
+    + 0.45 * clamp(toNum(priorRisk), 0, 1)
+  );
+
+  const probability = clamp(sigmoid(linear), 0, 1);
+  const riskScore = Number(probability.toFixed(2));
+  const riskLevel = riskScore > 0.7 ? "HIGH" : riskScore > 0.4 ? "MEDIUM" : "LOW";
+
+  const rainImpact = Number((1.45 * rainProbNorm + 0.85 * rainMmNorm).toFixed(3));
+  const airImpact = Number((1.1 * aqiNorm).toFixed(3));
+  const heatImpact = Number((0.55 * tempNorm).toFixed(3));
+  const trafficImpact = Number((0.95 * trafficNorm).toFixed(3));
+
+  const primaryDriver = rainImpact >= airImpact && rainImpact >= heatImpact && rainImpact >= trafficImpact
+    ? "rain"
+    : airImpact >= heatImpact && airImpact >= trafficImpact
+      ? "air-quality"
+      : heatImpact >= trafficImpact
+        ? "temperature"
+        : "traffic";
+
+  return {
+    modelVersion: "risk-lr-v1",
+    riskScore,
+    riskLevel,
+    confidence: riskScore >= 0.75 || riskScore <= 0.25 ? "high" : "medium",
+    explanation: {
+      primaryDriver,
+      rainImpact,
+      airImpact,
+      heatImpact,
+      trafficImpact,
+      features: {
+        rainProbability: Number(toNum(rainProbability).toFixed(1)),
+        rainMm: Number(toNum(rainMm).toFixed(1)),
+        aqi: Math.round(toNum(aqi)),
+        temperature: Number(toNum(temperature).toFixed(1)),
+        trafficDelayRatio: Number(toNum(trafficDelayRatio, 1).toFixed(2)),
+        hourOfDay,
+      },
+    },
+  };
+};
+
+const getTrafficSignals = async ({ latitude, longitude, destinationLatitude, destinationLongitude }) => {
+  const destLat = Number.isFinite(Number(destinationLatitude)) ? Number(destinationLatitude) : latitude + 0.03;
+  const destLon = Number.isFinite(Number(destinationLongitude)) ? Number(destinationLongitude) : longitude + 0.03;
+
+  if (!mapboxAccessToken) {
+    return {
+      provider: "heuristic",
+      trafficDelayRatio: 1.15,
+      durationMinutes: null,
+      baseDurationMinutes: null,
+      destination: { latitude: destLat, longitude: destLon },
+    };
+  }
+
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${longitude},${latitude};${destLon},${destLat}?alternatives=false&overview=false&annotations=duration,speed&access_token=${encodeURIComponent(mapboxAccessToken)}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    return {
+      provider: "mapbox-fallback",
+      trafficDelayRatio: 1.2,
+      durationMinutes: null,
+      baseDurationMinutes: null,
+      destination: { latitude: destLat, longitude: destLon },
+    };
+  }
+
+  const data = await response.json();
+  const route = data?.routes?.[0];
+  const durationSec = Number(route?.duration || 0);
+  const baseDurationSec = Number(route?.duration_typical || route?.duration || 0);
+  const delayRatio = baseDurationSec > 0
+    ? clamp(durationSec / baseDurationSec, 1, 3)
+    : 1.1;
+
+  return {
+    provider: "mapbox",
+    trafficDelayRatio: Number(delayRatio.toFixed(2)),
+    durationMinutes: Number((durationSec / 60).toFixed(1)),
+    baseDurationMinutes: Number((baseDurationSec / 60).toFixed(1)),
+    destination: { latitude: destLat, longitude: destLon },
+  };
+};
 
 const calculateRisk = ({ rainProbability, aqi, temperature }) => {
   const rainFactor = clamp(Number(rainProbability || 0) / 100, 0, 1);
@@ -143,6 +454,57 @@ const checkForClaim = ({ rain, activity, aqi, temperature, coverageLimit = 800 }
 };
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+const normalizeUserRole = (role) => String(role || "").trim().toLowerCase() === "admin" ? "admin" : "worker";
+
+const createAuthToken = ({ workerId, email, role }) => jwt.sign(
+  { workerId, email, role: normalizeUserRole(role) },
+  jwtSecret,
+  { expiresIn: "7d" },
+);
+
+const verifyAuthToken = (token) => {
+  try {
+    return jwt.verify(token, jwtSecret);
+  } catch {
+    return null;
+  }
+};
+
+const getBearerToken = (authorizationHeader) => {
+  const raw = String(authorizationHeader || "").trim();
+  if (!raw.toLowerCase().startsWith("bearer ")) return null;
+  return raw.slice(7).trim() || null;
+};
+
+const buildSessionFromWorker = (worker, role = "worker") => {
+  const planEndMs = worker?.plan_end_time ? new Date(worker.plan_end_time).getTime() : 0;
+  const planActive = Boolean(worker?.active_plan && planEndMs > Date.now());
+  const normalizedRole = normalizeUserRole(role);
+
+  return {
+    name: worker?.name || "",
+    email: normalizeEmail(worker?.email),
+    city: worker?.city || "",
+    salary: worker?.salary ? Number(worker.salary) : undefined,
+    persona_type: worker?.persona_type || "rain",
+    deliveryPartner: worker?.delivery_partner || "Zomato",
+    phone: "",
+    vehicleType: "",
+    emergencyContact: "",
+    role: normalizedRole,
+    policyActive: planActive,
+    purchasedPlans: planActive ? [String(worker.active_plan).trim().toLowerCase()] : [],
+    preferences: {
+      weatherAlerts: true,
+      payoutAlerts: true,
+      shiftReminders: true,
+      marketingEmails: false,
+      aiRecommendationMode: "balanced",
+      language: "English",
+      theme: "dark",
+    },
+  };
+};
 
 const normalizeClaimStatus = (status) => {
   const value = String(status || "").trim().toLowerCase();
@@ -171,6 +533,206 @@ const getWorkerIdByEmail = async (email) => {
   const result = await dbPool.query("SELECT id FROM workers WHERE LOWER(email) = $1 LIMIT 1", [normalizedEmail]);
   return result.rows[0]?.id || null;
 };
+
+app.post("/api/auth/register", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const {
+    name,
+    email,
+    password,
+    city,
+    salary,
+    persona_type,
+    delivery_partner,
+    role,
+  } = req.body || {};
+
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRole = normalizeUserRole(role);
+
+  if (!name || !normalizedEmail || !password || !city || salary === undefined) {
+    return res.status(400).json({ error: "name, email, password, city, and salary are required" });
+  }
+
+  if (String(password).trim().length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
+  }
+
+  if (isNaN(Number(salary)) || Number(salary) <= 0) {
+    return res.status(400).json({ error: "Salary must be a positive number" });
+  }
+
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingAuth = await client.query(
+      "SELECT id FROM auth_users WHERE LOWER(email) = $1 LIMIT 1",
+      [normalizedEmail],
+    );
+
+    if (existingAuth.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This email is already registered. Please log in." });
+    }
+
+    const workerResult = await client.query(
+      `
+      WITH updated AS (
+        UPDATE workers
+        SET name = $1,
+            email = $2,
+            city = $3,
+            salary = $4,
+            persona_type = COALESCE($5, 'rain'),
+            delivery_partner = COALESCE($6, 'Zomato')
+        WHERE LOWER(email) = $2
+        RETURNING id, name, email, city, salary, persona_type, delivery_partner, active_plan, plan_start_time, plan_end_time
+      ), inserted AS (
+        INSERT INTO workers (name, email, city, salary, persona_type, delivery_partner)
+        SELECT $1, $2, $3, $4, COALESCE($5, 'rain'), COALESCE($6, 'Zomato')
+        WHERE NOT EXISTS (SELECT 1 FROM updated)
+        RETURNING id, name, email, city, salary, persona_type, delivery_partner, active_plan, plan_start_time, plan_end_time
+      )
+      SELECT * FROM updated
+      UNION ALL
+      SELECT * FROM inserted
+      `,
+      [name, normalizedEmail, city, Number(salary), persona_type || "rain", delivery_partner || "Zomato"],
+    );
+
+    const worker = workerResult.rows[0];
+
+    const passwordHash = await bcrypt.hash(String(password), 12);
+    await client.query(
+      `
+      INSERT INTO auth_users (worker_id, email, password_hash, role)
+      VALUES ($1, $2, $3, $4)
+      `,
+      [worker.id, normalizedEmail, passwordHash, normalizedRole],
+    );
+
+    await client.query("COMMIT");
+
+    const session = buildSessionFromWorker(worker, normalizedRole);
+    const token = createAuthToken({ workerId: worker.id, email: normalizedEmail, role: normalizedRole });
+
+    return res.json({ session, token });
+  } catch {
+    await client.query("ROLLBACK");
+    return res.status(500).json({ error: "Unable to register right now." });
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const { email, password } = req.body || {};
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail || !password) {
+    return res.status(400).json({ error: "email and password are required" });
+  }
+
+  try {
+    const result = await dbPool.query(
+      `
+      SELECT
+        w.id,
+        w.name,
+        w.email,
+        w.city,
+        w.salary,
+        w.persona_type,
+        w.delivery_partner,
+        w.active_plan,
+        w.plan_start_time,
+        w.plan_end_time,
+        a.password_hash,
+        a.role
+      FROM auth_users a
+      JOIN workers w ON w.id = a.worker_id
+      WHERE LOWER(a.email) = $1
+      LIMIT 1
+      `,
+      [normalizedEmail],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      const legacyWorker = await dbPool.query(
+        "SELECT id FROM workers WHERE LOWER(email) = $1 LIMIT 1",
+        [normalizedEmail],
+      );
+
+      if (legacyWorker.rows[0]) {
+        return res.status(404).json({
+          error: "Your account exists but needs a one-time password setup. Please sign up once with the same email.",
+        });
+      }
+
+      return res.status(404).json({ error: "Account not found. Please sign up first." });
+    }
+
+    const passwordValid = await bcrypt.compare(String(password), String(row.password_hash || ""));
+    if (!passwordValid) {
+      return res.status(401).json({ error: "Incorrect password." });
+    }
+
+    const role = normalizeUserRole(row.role);
+    const session = buildSessionFromWorker(row, role);
+    const token = createAuthToken({ workerId: row.id, email: normalizedEmail, role });
+
+    return res.json({ session, token });
+  } catch {
+    return res.status(500).json({ error: "Unable to login." });
+  }
+});
+
+app.get("/api/auth/me", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const token = getBearerToken(req.headers.authorization);
+  if (!token) {
+    return res.status(401).json({ error: "Authorization token missing" });
+  }
+
+  const decoded = verifyAuthToken(token);
+  if (!decoded || typeof decoded !== "object") {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+
+  const workerId = Number(decoded.workerId);
+  const role = normalizeUserRole(decoded.role);
+
+  if (!workerId) {
+    return res.status(401).json({ error: "Invalid token payload" });
+  }
+
+  try {
+    const workerResult = await dbPool.query(
+      `SELECT id, name, email, city, salary, persona_type, delivery_partner, active_plan, plan_start_time, plan_end_time
+       FROM workers
+       WHERE id = $1
+       LIMIT 1`,
+      [workerId],
+    );
+
+    const worker = workerResult.rows[0];
+    if (!worker) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const session = buildSessionFromWorker(worker, role);
+    return res.json({ session });
+  } catch {
+    return res.status(500).json({ error: "Failed to validate session" });
+  }
+});
 
 const getWorkerPortalState = async (email) => {
   const normalizedEmail = normalizeEmail(email);
@@ -473,6 +1035,262 @@ app.post("/api/risk/insights", (req, res) => {
   });
 });
 
+app.post("/api/ai/risk/assess", async (req, res) => {
+  const city = String(req.body?.city || "").trim();
+  const normalizedSourceCoords = normalizeCoordinates({
+    latitude: req.body?.lat,
+    longitude: req.body?.lon,
+  });
+  const normalizedDestCoords = normalizeCoordinates({
+    latitude: req.body?.destinationLat,
+    longitude: req.body?.destinationLon,
+  });
+  const workerEmail = normalizeEmail(req.body?.workerEmail || "");
+
+  if (!city && !normalizedSourceCoords) {
+    return res.status(400).json({ error: "Either city or lat/lon is required" });
+  }
+
+  try {
+    const cityResolved = city ? await resolveCityCoordinates(city) : null;
+    const reverseResolved = normalizedSourceCoords
+      ? await resolveCoordinatesToCity({
+        latitude: normalizedSourceCoords.latitude,
+        longitude: normalizedSourceCoords.longitude,
+      }).catch(() => null)
+      : null;
+    const coordinates = normalizedSourceCoords || cityResolved;
+
+    if (!coordinates) {
+      return res.status(404).json({ error: "Unable to resolve location" });
+    }
+
+    const destination = normalizedDestCoords
+      || cityResolved
+      || { latitude: Number(coordinates.latitude) + 0.03, longitude: Number(coordinates.longitude) + 0.03 };
+
+    const cacheKey = buildRiskCacheKey({
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      destinationLatitude: destination.latitude,
+      destinationLongitude: destination.longitude,
+    });
+
+    const cached = getFromRiskCache(cacheKey);
+    if (cached) {
+      return res.json({
+        ...cached,
+        cache: { hit: true, ttlSeconds: Math.floor(RISK_CACHE_TTL_MS / 1000) },
+      });
+    }
+
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=temperature_2m,precipitation,rain,precipitation_probability&hourly=temperature_2m,precipitation_probability,rain&timezone=auto&forecast_days=1`;
+    const airUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${coordinates.latitude}&longitude=${coordinates.longitude}&current=us_aqi&hourly=us_aqi&timezone=auto&forecast_days=1`;
+
+    const [weatherRes, airRes, trafficSignals] = await Promise.all([
+      fetch(weatherUrl),
+      fetch(airUrl),
+      getTrafficSignals({
+        latitude: Number(coordinates.latitude),
+        longitude: Number(coordinates.longitude),
+        destinationLatitude: Number(destination.latitude),
+        destinationLongitude: Number(destination.longitude),
+      }),
+    ]);
+
+    if (!weatherRes.ok || !airRes.ok) {
+      return res.status(502).json({ error: "Failed to fetch external weather sources" });
+    }
+
+    const weatherData = await weatherRes.json();
+    const airData = await airRes.json();
+
+    const currentTemp = toNum(weatherData?.current?.temperature_2m, 0);
+    const currentRainMm = toNum(weatherData?.current?.rain ?? weatherData?.current?.precipitation, 0);
+    const currentRainProbability = toNum(
+      weatherData?.current?.precipitation_probability
+      ?? weatherData?.hourly?.precipitation_probability?.[0],
+      0,
+    );
+    const currentAqi = toNum(airData?.current?.us_aqi, 100);
+    const currentTrafficDelay = toNum(trafficSignals?.trafficDelayRatio, 1.1);
+    const nowHour = new Date().getHours();
+
+    const ruleRisk = calculateRisk({
+      rainProbability: currentRainProbability,
+      aqi: currentAqi,
+      temperature: currentTemp,
+    });
+
+    const aiRisk = calculateAiRisk({
+      rainProbability: currentRainProbability,
+      aqi: currentAqi,
+      temperature: currentTemp,
+      rainMm: currentRainMm,
+      trafficDelayRatio: currentTrafficDelay,
+      hourOfDay: nowHour,
+      priorRisk: 0,
+    });
+
+    const hybridRiskScore = Number(clamp(0.6 * aiRisk.riskScore + 0.4 * ruleRisk.riskScore, 0, 1).toFixed(2));
+    const hybridRiskLevel = hybridRiskScore > 0.7 ? "HIGH" : hybridRiskScore > 0.4 ? "MEDIUM" : "LOW";
+    const scoreSpread = Math.abs(aiRisk.riskScore - ruleRisk.riskScore);
+    const dataCompleteness = [currentRainProbability, currentAqi, currentTemp, currentTrafficDelay]
+      .filter((value) => Number.isFinite(value)).length / 4;
+    const hybridConfidence = scoreSpread < 0.15 && dataCompleteness >= 0.75 ? "high" : "medium";
+
+    const hourlyTimes = Array.isArray(weatherData?.hourly?.time) ? weatherData.hourly.time : [];
+    const hourlyTemps = Array.isArray(weatherData?.hourly?.temperature_2m) ? weatherData.hourly.temperature_2m : [];
+    const hourlyProb = Array.isArray(weatherData?.hourly?.precipitation_probability) ? weatherData.hourly.precipitation_probability : [];
+    const hourlyRain = Array.isArray(weatherData?.hourly?.rain) ? weatherData.hourly.rain : [];
+    const hourlyAqi = Array.isArray(airData?.hourly?.us_aqi) ? airData.hourly.us_aqi : [];
+
+    const trend = [];
+    let priorRisk = hybridRiskScore;
+    for (let i = 0; i < hourlyTimes.length; i += 1) {
+      const dt = new Date(hourlyTimes[i]);
+      const hour = dt.getHours();
+      if (hour < 6 || hour > 20 || hour % 2 !== 0) continue;
+
+      const aiPoint = calculateAiRisk({
+        rainProbability: toNum(hourlyProb[i], currentRainProbability),
+        aqi: toNum(hourlyAqi[i], currentAqi),
+        temperature: toNum(hourlyTemps[i], currentTemp),
+        rainMm: toNum(hourlyRain[i], 0),
+        trafficDelayRatio: currentTrafficDelay,
+        hourOfDay: hour,
+        priorRisk,
+      });
+      const rulePoint = calculateRisk({
+        rainProbability: toNum(hourlyProb[i], currentRainProbability),
+        aqi: toNum(hourlyAqi[i], currentAqi),
+        temperature: toNum(hourlyTemps[i], currentTemp),
+      });
+
+      const pointScore = Number(clamp(0.6 * aiPoint.riskScore + 0.4 * rulePoint.riskScore, 0, 1).toFixed(2));
+      priorRisk = pointScore;
+
+      trend.push({
+        hour,
+        label: `${((hour + 11) % 12) + 1}${hour >= 12 ? "PM" : "AM"}`,
+        riskScore: pointScore,
+        riskLevel: pointScore > 0.7 ? "HIGH" : pointScore > 0.4 ? "MEDIUM" : "LOW",
+      });
+    }
+
+    const responsePayload = {
+      source: "hybrid-external",
+      city: reverseResolved?.city || cityResolved?.city || city || "Unknown Area",
+      locationContext: {
+        country: reverseResolved?.country || null,
+      },
+      coordinates: {
+        latitude: Number(Number(coordinates.latitude).toFixed(4)),
+        longitude: Number(Number(coordinates.longitude).toFixed(4)),
+      },
+      destination: {
+        latitude: Number(Number(destination.latitude).toFixed(4)),
+        longitude: Number(Number(destination.longitude).toFixed(4)),
+      },
+      signals: {
+        weatherProvider: "open-meteo",
+        airProvider: "open-meteo-air",
+        trafficProvider: trafficSignals.provider,
+        trafficDelayRatio: Number(currentTrafficDelay.toFixed(2)),
+        routeDurationMinutes: trafficSignals.durationMinutes,
+      },
+      current: {
+        temperature: Number(currentTemp.toFixed(1)),
+        rainMm: Number(currentRainMm.toFixed(1)),
+        rainProbability: Number(currentRainProbability.toFixed(1)),
+        aqi: Math.round(currentAqi),
+        ruleRisk,
+        aiRisk,
+        risk: {
+          modelVersion: "risk-hybrid-v2",
+          riskScore: hybridRiskScore,
+          riskLevel: hybridRiskLevel,
+          confidence: hybridConfidence,
+          explanation: {
+            primaryDriver: aiRisk.explanation.primaryDriver,
+            rainImpact: aiRisk.explanation.rainImpact,
+            airImpact: aiRisk.explanation.airImpact,
+            heatImpact: aiRisk.explanation.heatImpact,
+            trafficImpact: aiRisk.explanation.trafficImpact,
+            features: aiRisk.explanation.features,
+            blend: {
+              aiWeight: 0.6,
+              ruleWeight: 0.4,
+              aiScore: aiRisk.riskScore,
+              ruleScore: ruleRisk.riskScore,
+            },
+          },
+        },
+      },
+      trend,
+      generatedAt: new Date().toISOString(),
+    };
+
+    saveToRiskCache(cacheKey, responsePayload);
+
+    if (dbPool && workerEmail) {
+      const workerId = await getWorkerIdByEmail(workerEmail);
+      await dbPool.query(
+        `
+        INSERT INTO worker_location_risk_logs (
+          worker_id,
+          city,
+          latitude,
+          longitude,
+          destination_latitude,
+          destination_longitude,
+          rain_probability,
+          rain_mm,
+          aqi,
+          temperature,
+          traffic_delay_ratio,
+          rule_score,
+          ai_score,
+          hybrid_score,
+          risk_level,
+          confidence,
+          source
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        `,
+        [
+          workerId,
+          responsePayload.city,
+          responsePayload.coordinates.latitude,
+          responsePayload.coordinates.longitude,
+          responsePayload.destination.latitude,
+          responsePayload.destination.longitude,
+          responsePayload.current.rainProbability,
+          responsePayload.current.rainMm,
+          responsePayload.current.aqi,
+          responsePayload.current.temperature,
+          responsePayload.signals.trafficDelayRatio,
+          responsePayload.current.ruleRisk.riskScore,
+          responsePayload.current.aiRisk.riskScore,
+          responsePayload.current.risk.riskScore,
+          responsePayload.current.risk.riskLevel,
+          responsePayload.current.risk.confidence,
+          responsePayload.source,
+        ],
+      ).catch(() => {
+        // Keep inference non-blocking if logging fails.
+      });
+    }
+
+    return res.json({
+      ...responsePayload,
+      cache: { hit: false, ttlSeconds: Math.floor(RISK_CACHE_TTL_MS / 1000) },
+    });
+  } catch {
+    return res.status(500).json({ error: "Failed to run AI risk assessment" });
+  }
+});
+
 app.post("/api/db/workers/upsert", async (req, res) => {
   if (!requireDb(res)) return;
 
@@ -534,6 +1352,94 @@ app.post("/api/db/risk-data", async (req, res) => {
     return res.json({ riskData: result.rows[0] });
   } catch {
     return res.status(500).json({ error: "Failed to store risk data" });
+  }
+});
+
+app.post("/api/db/location-risk", async (req, res) => {
+  if (!requireDb(res)) return;
+
+  const {
+    worker_email,
+    city,
+    latitude,
+    longitude,
+    destination_latitude,
+    destination_longitude,
+    rain_probability,
+    rain_mm,
+    aqi,
+    temperature,
+    traffic_delay_ratio,
+    rule_score,
+    ai_score,
+    hybrid_score,
+    risk_level,
+    confidence,
+    source,
+  } = req.body || {};
+
+  if (
+    latitude === undefined || longitude === undefined
+    || rain_probability === undefined || rain_mm === undefined
+    || aqi === undefined || temperature === undefined
+    || traffic_delay_ratio === undefined
+    || rule_score === undefined || ai_score === undefined || hybrid_score === undefined
+    || !risk_level || !confidence
+  ) {
+    return res.status(400).json({ error: "Missing required location risk fields" });
+  }
+
+  try {
+    const workerId = worker_email ? await getWorkerIdByEmail(worker_email) : null;
+
+    const result = await dbPool.query(
+      `
+      INSERT INTO worker_location_risk_logs (
+        worker_id,
+        city,
+        latitude,
+        longitude,
+        destination_latitude,
+        destination_longitude,
+        rain_probability,
+        rain_mm,
+        aqi,
+        temperature,
+        traffic_delay_ratio,
+        rule_score,
+        ai_score,
+        hybrid_score,
+        risk_level,
+        confidence,
+        source
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      RETURNING *
+      `,
+      [
+        workerId,
+        city || null,
+        latitude,
+        longitude,
+        destination_latitude || null,
+        destination_longitude || null,
+        rain_probability,
+        rain_mm,
+        aqi,
+        temperature,
+        traffic_delay_ratio,
+        rule_score,
+        ai_score,
+        hybrid_score,
+        risk_level,
+        confidence,
+        source || "frontend-live",
+      ],
+    );
+
+    return res.json({ locationRisk: result.rows[0] });
+  } catch {
+    return res.status(500).json({ error: "Failed to store location risk data" });
   }
 });
 
@@ -1114,6 +2020,16 @@ const pingRenderUrl = () => {
     timer.unref();
   }
 };
+
+// Register ML routes (pass dbPool for database access)
+const mlRouter = mlRoutes(dbPool);
+app.use("/api/ml", mlRouter);
+
+// Start automated trigger checker (fires every 5 minutes)
+if (dbPool) {
+  startTriggerChecker(dbPool, 5 * 60 * 1000);
+  console.log("✓ Trigger checker initialized");
+}
 
 app.listen(process.env.PORT || 8080, () => {
   console.log(`SmartShift app running on http://localhost:${PORT}`);
