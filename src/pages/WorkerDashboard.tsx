@@ -1759,53 +1759,108 @@ const WorkerDashboard = () => {
             </div>
           </section>
 
-          <section className="space-y-4 pt-2">
+          {/* INSURANCE PLANS SECTION - PROMINENT & HIGH VISIBILITY */}
+          <section ref={plansSectionRef} className="space-y-4 pt-2">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-display text-2xl md:text-3xl font-bold text-foreground tracking-tight">🛡️ Choose Your Coverage Plan</h2>
+              <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-400/50">Activate Instantly</span>
+            </div>
+            {user?.salary && (
+              <div className="mb-4 p-4 rounded-xl bg-gradient-to-r from-blue-500/15 to-cyan-500/15 border border-blue-400/40 shadow-[0_0_20px_rgba(59,130,246,0.1)]">
+                <p className="text-sm font-semibold mb-1.5 text-blue-200">💡 Smart Recommendation Based on Your Salary</p>
+                <p className="text-sm text-blue-100">
+                  Your monthly salary is <span className="font-bold text-blue-300">₹{Number(user.salary).toLocaleString('en-IN')}</span>. We recommend the <span className="font-bold text-amber-300">{user.salary < 40000 ? 'Low Risk Plan' : user.salary <= 80000 ? 'Medium Risk Plan' : 'Premium Risk Plan'}</span> for optimal coverage.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {planCatalog.map((plan) => {
+                const selected = coverageDetails.planId === plan.id;
+                const inPayment = paymentPlanId === plan.id;
+                // Use salary-based recommendation if salary is available, otherwise use risk-based
+                const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
+                return (
+                  <motion.div
+                    key={plan.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className={`relative rounded-2xl p-6 transition-all duration-300 border-2 ${
+                      selected
+                        ? "bg-gradient-to-br from-accent/20 to-accent/5 border-accent shadow-[0_0_30px_rgba(251,191,36,0.2)]"
+                        : "bg-gradient-to-br from-slate-800/40 to-slate-900/40 border-slate-700/50 hover:border-slate-600 hover:shadow-lg"
+                    }`}
+                  >
+                    {recommended && (
+                      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                        <span className="px-3 py-1 rounded-full bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-900 text-xs font-bold shadow-lg">⭐ RECOMMENDED</span>
+                      </div>
+                    )}
+                    {selected && (
+                      <div className="absolute top-4 right-4 bg-emerald-500/30 border border-emerald-400/60 rounded-full p-2 shadow-lg">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+                      </div>
+                    )}
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <h4 className="font-display text-xl font-bold text-foreground mb-2">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-3xl font-bold text-emerald-400">{plan.premium}</span>
+                          <span className="text-xs text-muted-foreground">/week</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 pt-2 border-t border-slate-600/40">
+                        <div className="flex items-start gap-3">
+                          <div className="text-lg">💰</div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Payout Amount</p>
+                            <p className="text-lg font-bold text-foreground">{plan.payout}</p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-start gap-3">
+                          <div className="text-lg">🎯</div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Auto Trigger</p>
+                            <p className="text-xs text-foreground font-medium">{tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-start gap-3">
+                          <div className="text-lg">✅</div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">Best For</p>
+                            <p className="text-xs text-foreground font-medium">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 mt-4 border-t border-slate-600/40">
+                      {selected ? (
+                        <Button className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white" disabled>
+                          <CheckCircle2 className="w-4 h-4" /> {tx(language, "Plan Active", "प्लान सक्रिय")}
+                        </Button>
+                      ) : (
+                        <Button
+                          className="w-full gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-all"
+                          onClick={() => startPlanPayment(plan.id)}
+                        >
+                          <Wallet className="w-4 h-4" /> {tx(language, "Activate Plan", "प्लान सक्रिय करें")}
+                        </Button>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="space-y-4 pt-4">
             <h2 className="font-display text-xl md:text-2xl font-semibold text-foreground tracking-tight">💡 Smart Recommendations</h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div ref={plansSectionRef} className="glass-card rounded-xl p-6 bg-[#0F172A]/75 border border-border/60">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-display font-semibold text-foreground">Available Plans</h3>
-                  <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">No waiting period</span>
-                </div>
-                {user?.salary && (
-                  <div className="mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-100">
-                    <p className="text-xs font-semibold mb-1">💡 Plan Recommendation Based on Your Salary</p>
-                    <p className="text-xs">
-                      Your monthly salary is ₹{Number(user.salary).toLocaleString('en-IN')}. We recommend the{' '}
-                      {user.salary < 40000 ? 'Low Risk Plan' : user.salary <= 80000 ? 'Medium Risk Plan' : 'Premium Risk Plan'} for optimal coverage.
-                    </p>
-                  </div>
-                )}
-                <div className="grid md:grid-cols-1 xl:grid-cols-2 gap-4">
-                  {planCatalog.map((plan) => {
-                    const selected = coverageDetails.planId === plan.id;
-                    const inPayment = paymentPlanId === plan.id;
-                    // Use salary-based recommendation if salary is available, otherwise use risk-based
-                    const recommended = user?.salary ? plan.id === salaryRecommendedPlanId : plan.id === recommendedPlanId;
-                    return (
-                      <div key={plan.id} className={`rounded-xl p-4 ${selected ? "bg-accent/10 border border-accent/30" : "bg-card/50 border border-border/50"}`}>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <h4 className="font-display text-sm font-semibold text-foreground">{tx(language, plan.name, planNameHindi[plan.name] || plan.name)}</h4>
-                          {recommended && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-300/40 font-semibold">Recommended ⭐</span>}
-                        </div>
-                        <div className="space-y-1 text-xs mb-3">
-                          <div className="flex justify-between"><span className="text-muted-foreground">Window</span><span className="text-foreground">{plan.window}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground">Premium</span><span className="text-foreground">{plan.premium}/week</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground">Payout</span><span className="text-foreground">{plan.payout}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground">Auto Trigger</span><span className="text-foreground text-right">{tx(language, plan.triggers, planTriggerHindi[plan.triggers] || plan.triggers)}</span></div>
-                          <div className="flex justify-between"><span className="text-muted-foreground">Best For</span><span className="text-foreground text-right">{tx(language, plan.bestFor, planBestForHindi[plan.bestFor] || plan.bestFor)}</span></div>
-                        </div>
-                        {selected ? (
-                          <Button className="w-full gap-2" variant="secondary" disabled><CheckCircle2 className="w-4 h-4" /> {tx(language, "Plan Active", "प्लान सक्रिय")}</Button>
-                        ) : (
-                          <Button className="w-full gap-2" onClick={() => startPlanPayment(plan.id)}><Wallet className="w-4 h-4" /> {tx(language, "Activate Plan", "प्लान सक्रिय करें")}</Button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
               <div className="glass-card rounded-xl p-6 border border-border/60 bg-[#0F172A]/75">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-display font-semibold text-foreground">AI Earnings Optimization</h3>
