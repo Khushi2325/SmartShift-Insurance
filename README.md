@@ -998,23 +998,23 @@ We welcome contributions! Please:
 
 ---
 
-## 📄 License & Disclaimer
+## License & Disclaimer
 
 **License:** MIT - See [LICENSE](LICENSE) file
 
 **Disclaimer:**  
 SmartShift is a demonstration platform for educational and evaluation purposes. Production insurance requires:
-- ✅ Partnership with licensed insurer
-- ✅ IRDAI (India) or equivalent regulatory approval
-- ✅ Compliance with local insurance laws
-- ✅ KYC/AML verification
-- ✅ Proper underwriting
+- Partnership with licensed insurer
+- IRDAI (India) or equivalent regulatory approval
+- Compliance with local insurance laws
+- KYC/AML verification
+- Proper underwriting
 
 **Use at your own risk.** This is NOT licensed insurance software.
 
 ---
 
-## 📞 Support & Communication
+## Support & Communication
 
 | Channel | Link |
 |---------|------|
@@ -1030,7 +1030,7 @@ SmartShift is a demonstration platform for educational and evaluation purposes. 
 
 ---
 
-## 🎉 Acknowledgments
+## Acknowledgments
 
 - **Open-Meteo** - Real-time weather API
 - **WAQI** - Air quality data
@@ -1042,31 +1042,31 @@ SmartShift is a demonstration platform for educational and evaluation purposes. 
 
 ---
 
-## 📈 Stats & Metrics
+## Stats & Metrics
 
 ```
-📊 Project Size:
+Project Size:
 ├─ Frontend: 1,200+ lines React/TypeScript
 ├─ Backend: 2,500+ lines Node.js/Express
 ├─ Database: 12 tables, RLS policies
 ├─ ML Model: 300+ lines Python
 └─ Total: 6,000+ lines of code
 
-🚀 Performance:
+Performance:
 ├─ Frontend Bundle: ~500KB (gzipped)
 ├─ API Response: <300ms avg
 ├─ Database Query: <100ms avg
 ├─ ML Prediction: <500ms avg
 └─ Full Page Load: <2s
 
-🔒 Security:
+Security:
 ├─ Data encryption: TLS in transit
 ├─ Auth: JWT + bcrypt
 ├─ RLS: PostgreSQL row-level policies
 ├─ Fraud detection: 3-layer system
 └─ Audit logging: 100% coverage
 
-✅ Test Coverage:
+Test Coverage:
 ├─ Unit tests: 80+
 ├─ E2E scenarios: 15+
 ├─ Performance tests: 5
