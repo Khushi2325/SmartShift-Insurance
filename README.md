@@ -22,7 +22,7 @@
 |----------|------|
 | **🎬 Pitch Deck** | [SmartShift Investor Presentation](https://docs.google.com/presentation/d/1SrW3faKLoC1EFEwi-cqMqWnMNfAo6tLB9LTgAcYqQYY/edit?usp=sharing) |
 | **📹 Demo Video** | [5-Min Product Walkthrough](https://youtube.com/shorts/STcQlzhvcNg?si=SSPQCAYtFPSj0b_N) |
-| **🌐 Live App** | [https://smart-shift-insurance.vercel.app](https://smartshift-insurance.vercel.app) |
+| **🌐 Live App** | [https://smartshift-insurance.vercel.app](https://smart-shift-insurance.vercel.app) |
 | **📊 Repository** | [GitHub: SmartShift-Insurance](https://github.com/Khushi2325/SmartShift-Insurance) |
 
 ---
