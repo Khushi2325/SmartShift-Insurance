@@ -20,10 +20,10 @@
 
 | Resource | Link |
 |----------|------|
-| **🎬 Pitch Deck** | [SmartShift Investor Presentation](https://docs.google.com/presentation/d/1SrW3faKLoC1EFEwi-cqMqWnMNfAo6tLB9LTgAcYqQYY/edit?usp=sharing) |
-| **📹 Demo Video** | [5-Min Product Walkthrough](https://youtube.com/shorts/STcQlzhvcNg?si=SSPQCAYtFPSj0b_N) |
-| **🌐 Live App** | [https://smartshift-insurance.vercel.app](https://smart-shift-insurance.vercel.app) |
-| **📊 Repository** | [GitHub: SmartShift-Insurance](https://github.com/Khushi2325/SmartShift-Insurance) |
+| **Pitch Deck** | [SmartShift Investor Presentation](https://docs.google.com/presentation/d/1SrW3faKLoC1EFEwi-cqMqWnMNfAo6tLB9LTgAcYqQYY/edit?usp=sharing) |
+| **Demo Video** | [5-Min Product Walkthrough](https://youtube.com/shorts/STcQlzhvcNg?si=SSPQCAYtFPSj0b_N) |
+| **Live App** | [https://smartshift-insurance.vercel.app](https://smart-shift-insurance.vercel.app) |
+| **Repository** | [GitHub: SmartShift-Insurance](https://github.com/Khushi2325/SmartShift-Insurance) |
 
 ---
 
@@ -31,14 +31,14 @@
 
 SmartShift is an **AI-assisted parametric insurance platform** that:
 
-✅ **Protects gig workers** from weather-driven income disruption  
-✅ **Scores risk in real-time** using weather, air quality, and traffic data  
-✅ **Triggers claims automatically** when measurable disruption is detected  
-✅ **Prevents fraud** with multi-layer detection and row-level security  
-✅ **Explains decisions** with SHAP-style feature attribution  
-✅ **Scales securely** with PostgreSQL row-level security (RLS)  
+**Protects gig workers** from weather-driven income disruption  
+**Scores risk in real-time** using weather, air quality, and traffic data  
+**Triggers claims automatically** when measurable disruption is detected  
+**Prevents fraud** with multi-layer detection and row-level security  
+**Explains decisions** with SHAP-style feature attribution  
+**Scales securely** with PostgreSQL row-level security (RLS)  
 
-**Status:** ✅ Phase 2 Complete | ✅ Live on Vercel + Neon | ✅ Ready for Judges
+**Status:** Phase 2 Complete | Live on Vercel + Neon | Ready for Judges
 
 ---
 
@@ -46,11 +46,11 @@ SmartShift is an **AI-assisted parametric insurance platform** that:
 
 | Challenge | Our Solution |
 |-----------|--------------|
-| **"Primarily rule-based"** | ✅ ML-style scoring with logistic regression + feature weighting |
-| **"Lacks external data"** | ✅ Real-time Open-Meteo weather + WAQI air quality APIs |
-| **"No ML integration"** | ✅ Hybrid model with explainability + confidence scoring |
-| **"Missing auditability"** | ✅ All decisions logged with feature values + model reasoning |
-| **"Insurance gaps"** | ✅ Fraud detection pipeline + RLS multi-tenant security |
+| **"Primarily rule-based"** | ML-style scoring with logistic regression + feature weighting |
+| **"Lacks external data"** | Real-time Open-Meteo weather + WAQI air quality APIs |
+| **"No ML integration"** | Hybrid model with explainability + confidence scoring |
+| **"Missing auditability"** | All decisions logged with feature values + model reasoning |
+| **"Insurance gaps"** | Fraud detection pipeline + RLS multi-tenant security |
 
 ---
 
@@ -77,10 +77,10 @@ Frontend          │  Backend           │  Database       │  Deployment
 
 ### Prerequisites
 ```bash
-✅ Node.js 18+       → Download from nodejs.org
-✅ npm 9+            → Comes with Node
-✅ Neon Account      → Free tier at neon.tech
-✅ Razorpay Account  → Test mode at razorpay.com
+Node.js 18+       → Download from nodejs.org
+npm 9+            → Comes with Node
+Neon Account      → Free tier at neon.tech
+Razorpay Account  → Test mode at razorpay.com
 ```
 
 ### Step 1: Clone & Install
@@ -146,10 +146,10 @@ Expected output:
 
 ### Step 5: Open in Browser
 ```
-👉 http://localhost:5174
+http://localhost:5174
 ```
 
-### ✅ Health Check
+### Health Check
 ```bash
 curl http://localhost:8080/api/payment/health
 # Expected: {"status":"ok"}
@@ -157,7 +157,7 @@ curl http://localhost:8080/api/payment/health
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
@@ -349,11 +349,11 @@ SmartShift combines **real-time external data** + **ML-style scoring** + **SHAP-
 
 **Why TypeScript, not Python?**  
 We implemented ML logic in TypeScript (not Python) to ensure:
-- ✅ **Zero deployment conflicts** - Single Node.js runtime on Vercel (no Py + Node mess)
-- ✅ **Lightweight** - No heavy ML libraries (numpy, pandas, scikit-learn) = faster cold starts
-- ✅ **Reliable** - Pure mathematical implementation (logistic regression + sigmoid)
-- ✅ **Mobile-friendly** - Gig workers on slow networks get fast responses
-- ✅ **Vercel-optimized** - Works perfectly in serverless environment (no 250MB limit issues)
+- **Zero deployment conflicts** - Single Node.js runtime on Vercel (no Py + Node mess)
+- **Lightweight** - No heavy ML libraries (numpy, pandas, scikit-learn) = faster cold starts
+- **Reliable** - Pure mathematical implementation (logistic regression + sigmoid)
+- **Mobile-friendly** - Gig workers on slow networks get fast responses
+- **Vercel-optimized** - Works perfectly in serverless environment (no 250MB limit issues)
 
 The ML model maintains full feature parity with traditional ML frameworks.
 
@@ -492,10 +492,10 @@ curl -X POST http://localhost:8080/api/ai/risk/assess \
 ### Fallback Safety
 
 If external APIs are down:
-- ✅ Uses **last-known-good** data (cached 30 mins)
-- ✅ Falls back to **baseline rule-based** scoring
-- ✅ No crash or data loss
-- ✅ Platform continues operating
+- Uses **last-known-good** data (cached 30 mins)
+- Falls back to **baseline rule-based** scoring
+- No crash or data loss
+- Platform continues operating
 
 ---
 
@@ -557,7 +557,7 @@ Claim #4521
 │  ├─ Claim History: 15 claims in 30 days
 │  └─ Chat: "Machine broke due to heavy rain"
 ├─ Admin Actions:
-│  ├─ [✅ Approve] [❌ Reject] [⏸️ Request More Info]
+│  ├─ [Approve] [Reject] [Request More Info]
 │  └─ Notes: ___________________________
 └─ Audit: Approved by admin@smartshift.com | 2026-04-17 14:32 UTC
 ```
@@ -726,36 +726,36 @@ curl -X POST http://localhost:8080/api/payment/verify \
 - Wallet credit system + balance tracking
 
 ### AI/ML Features
-- ✅ Hybrid ML model (logistic regression-style)
-- ✅ Real-time weather + AQI data ingestion
-- ✅ Feature weighting (rain 35%, AQI 15%, temp 15%, etc.)
-- ✅ SHAP-style explainability (top 3 drivers)
-- ✅ Confidence scoring (0-1)
-- ✅ Peak hour risk multiplier
-- ✅ Fallback to baseline if APIs down
-- ✅ TypeScript-based ML backend (lightweight, Vercel-optimized)
+- Hybrid ML model (logistic regression-style)
+- Real-time weather + AQI data ingestion
+- Feature weighting (rain 35%, AQI 15%, temp 15%, etc.)
+- SHAP-style explainability (top 3 drivers)
+- Confidence scoring (0-1)
+- Peak hour risk multiplier
+- Fallback to baseline if APIs down
+- TypeScript-based ML backend (lightweight, Vercel-optimized)
 
 ### Security Features
-- ✅ Bcrypt password hashing
-- ✅ JWT token-based auth
-- ✅ Row-level security (PostgreSQL RLS)
-- ✅ Fraud detection (rule-based + ML anomaly)
-- ✅ Admin review + audit logging
-- ✅ Rate limiting on auth endpoints
-- ✅ CORS protection
-- ✅ SQL injection prevention (Drizzle ORM)
+- Bcrypt password hashing
+- JWT token-based auth
+- Row-level security (PostgreSQL RLS)
+- Fraud detection (rule-based + ML anomaly)
+- Admin review + audit logging
+- Rate limiting on auth endpoints
+- CORS protection
+- SQL injection prevention (Drizzle ORM)
 
 ### Infrastructure Features
-- ✅ Multi-environment support (dev, staging, prod)
-- ✅ Database schema migrations
-- ✅ Environment-based configuration
-- ✅ Fallback safety (graceful degradation)
-- ✅ Error handling + logging
-- ✅ Performance caching (30 min TTL)
+- Multi-environment support (dev, staging, prod)
+- Database schema migrations
+- Environment-based configuration
+- Fallback safety (graceful degradation)
+- Error handling + logging
+- Performance caching (30 min TTL)
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ### Unit Tests
 ```bash
@@ -766,66 +766,66 @@ npm run test
 
 #### 1. Registration & Persistence
 ```
-✅ Register new worker → Email verified
-✅ Data persisted in Neon (check console)
-✅ Close browser → Session restored via JWT
-✅ Password stored bcrypted (can't see plaintext)
+Register new worker → Email verified
+Data persisted in Neon (check console)
+Close browser → Session restored via JWT
+Password stored bcrypted (can't see plaintext)
 ```
 
 #### 2. Login Flow
 ```
-✅ Correct email + password → JWT token returned
-✅ Wrong password → 401 "Invalid credentials"
-✅ Non-existent email → 404 "User not found"
-✅ Multiple failures → Auto-blocked for 15 mins
+Correct email + password → JWT token returned
+Wrong password → 401 "Invalid credentials"
+Non-existent email → 404 "User not found"
+Multiple failures → Auto-blocked for 15 mins
 ```
 
 #### 3. Risk Scoring
 ```
-✅ POST /api/ai/risk/assess with valid location
+POST /api/ai/risk/assess with valid location
    → Risk score 0-100 + top 3 drivers + confidence
-✅ Score HIGH during bad weather → Score increases
-✅ Score LOW during clear day → Score decreases
-✅ API outage → Falls back to baseline (no crash)
+Score HIGH during bad weather → Score increases
+Score LOW during clear day → Score decreases
+API outage → Falls back to baseline (no crash)
 ```
 
 #### 4. Plan Purchase
 ```
-✅ Select plan → Plan details displayed
-✅ Click "Activate Plan" → Payment gateway opens
-✅ Complete payment → Plan activated
-✅ Check /api/db/workers/portal → Plan status persisted
+Select plan → Plan details displayed
+Click "Activate Plan" → Payment gateway opens
+Complete payment → Plan activated
+Check /api/db/workers/portal → Plan status persisted
 ```
 
 #### 5. Claim Processing
 ```
-✅ Trigger disruption event → Claim created
-✅ System detects fraud patterns → Flagged for admin
-✅ Admin approves → Wallet credited
-✅ Admin rejects → Worker notified
+Trigger disruption event → Claim created
+System detects fraud patterns → Flagged for admin
+Admin approves → Wallet credited
+Admin rejects → Worker notified
 ```
 
 #### 6. Admin Dashboard
 ```
-✅ Admin login → See all workers + claims
-✅ Non-admin login → Redirect (access denied)
-✅ Fraud flags visible → Show evidence + admin controls
-✅ Approve/reject → Audit log updated
+Admin login → See all workers + claims
+Non-admin login → Redirect (access denied)
+Fraud flags visible → Show evidence + admin controls
+Approve/reject → Audit log updated
 ```
 
 ### Performance Targets
 
 | Endpoint | Target | Status |
 |----------|--------|--------|
-| POST /api/auth/login | <200ms | ✅ ~150ms |
-| POST /api/auth/register | <300ms | ✅ ~200ms |
-| POST /api/ai/risk/assess | <500ms | ✅ ~300ms |
-| GET /dashboard | <1s | ✅ ~800ms |
-| GET /admin/claims | <800ms | ✅ ~600ms |
+| POST /api/auth/login | <200ms | ~150ms |
+| POST /api/auth/register | <300ms | ~200ms |
+| POST /api/ai/risk/assess | <500ms | ~300ms |
+| GET /dashboard | <1s | ~800ms |
+| GET /admin/claims | <800ms | ~600ms |
 
 ---
 
-## 📊 Architecture Diagram
+## Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -867,7 +867,7 @@ npm run test
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 shift-shield-main/
@@ -926,15 +926,15 @@ shift-shield-main/
 
 ---
 
-## 🚀 Project Roadmap
+## Project Roadmap
 
-### ✅ Phase 1: MVP (Complete)
+### Phase 1: MVP (Complete)
 - Worker + Admin registration
 - Basic risk scoring
 - Plan purchase
 - Claim processing
 
-### ✅ Phase 2: AI/ML & Production (Complete)
+### Phase 2: AI/ML & Production (Complete)
 - Real-time external data (weather, AQI)
 - ML-style hybrid scoring
 - Explainability (SHAP-style)
@@ -942,27 +942,27 @@ shift-shield-main/
 - Production deployment (Vercel + Neon)
 - **TypeScript-based ML backend**
 
-### 📋 Phase 3: Advanced Features (Planned)
-- [ ] Gradient Boosting (XGBoost) with SHAP
-- [ ] Real-time model monitoring (drift detection)
-- [ ] Predictive claim forecasting
-- [ ] Regional customization
+### Phase 3: Advanced Features (Planned)
+- Gradient Boosting (XGBoost) with SHAP
+- Real-time model monitoring (drift detection)
+- Predictive claim forecasting
+- Regional customization
 
-### 🔮 Phase 4: Blockchain (Future)
-- [ ] Smart contract deployment (Polygon)
-- [ ] Immutable claim records
-- [ ] DeFi integration for liquidity
-- [ ] Decentralized claim settlement
+### Phase 4: Blockchain (Future)
+- Smart contract deployment (Polygon)
+- Immutable claim records
+- DeFi integration for liquidity
+- Decentralized claim settlement
 
-### 🌍 Phase 5: Global Scale (Future)
-- [ ] Multi-language support (Hindi, Tamil, Kannada)
-- [ ] Web3 wallet integration
-- [ ] Gig platform partnerships (Uber, Ola, Swiggy)
-- [ ] Expansion to ASEAN region
+### Phase 5: Global Scale (Future)
+- Multi-language support (Hindi, Tamil, Kannada)
+- Web3 wallet integration
+- Gig platform partnerships (Uber, Ola, Swiggy)
+- Expansion to ASEAN region
 
 ---
 
-## 🐛 Known Issues & Workarounds
+## Known Issues & Workarounds
 
 | Issue | Workaround |
 |-------|-----------|
@@ -975,10 +975,9 @@ shift-shield-main/
 
 ---
 
-## 👥 Team & Contributions
+## Team & Contributions
 
-**Created by:** Khushi Jain & team  
-**Challenge:** DevTrails Phase 2 (Guidewire Insurance Track)  
+**Created by:** Khushi Chorvadi & team  
 **Repository:** [SmartShift-Insurance on GitHub](https://github.com/Khushi2325/SmartShift-Insurance)
 
 ### Contributing
